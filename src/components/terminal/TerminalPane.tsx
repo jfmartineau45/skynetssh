@@ -63,6 +63,27 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [connectNonce, setConnectNonce] = useState(0);
+  const [splitPicker, setSplitPicker] = useState<{
+    direction: "horizontal" | "vertical";
+    top: number;
+    left: number;
+  } | null>(null);
+  const [splitFilter, setSplitFilter] = useState("");
+  const splitMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!splitPicker) return;
+    const onDown = (e: MouseEvent) => {
+      if (
+        splitMenuRef.current &&
+        !splitMenuRef.current.contains(e.target as Node)
+      ) {
+        setSplitPicker(null);
+      }
+    };
+    window.addEventListener("mousedown", onDown);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, [splitPicker]);
 
   const inBroadcast =
     broadcastEnabled && broadcastPaneIds.includes(pane.id);
@@ -261,7 +282,8 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connectNonce]);
 
-  const handleSplit = (direction: "horizontal" | "vertical") => {
+  const handleSplitDuplicate = (direction: "horizontal" | "vertical") => {
+    setSplitPicker(null);
     if (pane.kind === "ssh" && pane.hostId) {
       splitPane(tabId, pane.id, direction, {
         kind: "ssh",
@@ -276,6 +298,24 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
         shellProfile: profile,
       });
     }
+  };
+
+  const openSplitMenu = (
+    e: React.MouseEvent<HTMLButtonElement>,
+    direction: "horizontal" | "vertical"
+  ) => {
+    e.stopPropagation();
+    const r = e.currentTarget.getBoundingClientRect();
+    setSplitFilter("");
+    setSplitPicker((prev) =>
+      prev?.direction === direction
+        ? null
+        : {
+            direction,
+            top: r.bottom + 4,
+            left: Math.max(8, Math.min(r.right - 240, window.innerWidth - 248)),
+          }
+    );
   };
 
   return (
@@ -351,16 +391,16 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
             <Search className="w-3 h-3" />
           </button>
           <button
-            onClick={() => handleSplit("horizontal")}
+            onClick={(e) => openSplitMenu(e, "horizontal")}
             className="p-1 rounded text-[var(--text-secondary)] hover:text-white hover:bg-white/10 transition"
-            title="Split Right"
+            title="Split Right (pick server or local shell)"
           >
             <Columns2 className="w-3 h-3" />
           </button>
           <button
-            onClick={() => handleSplit("vertical")}
+            onClick={(e) => openSplitMenu(e, "vertical")}
             className="p-1 rounded text-[var(--text-secondary)] hover:text-white hover:bg-white/10 transition"
-            title="Split Down"
+            title="Split Down (pick server or local shell)"
           >
             <Rows2 className="w-3 h-3" />
           </button>
@@ -380,6 +420,114 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
           </button>
         </div>
       </div>
+
+      {/* Split Target Picker (Choose any Saved SSH Host or Local Shell!) */}
+      {splitPicker && (
+        <div
+          ref={splitMenuRef}
+          style={{ top: splitPicker.top, left: splitPicker.left }}
+          className="fixed w-60 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-accent)] shadow-2xl py-1.5 z-50 text-xs"
+        >
+          <div className="px-2.5 pb-1.5 border-b border-[var(--border-subtle)]">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] mb-1">
+              Split {splitPicker.direction === "horizontal" ? "Right" : "Down"} With...
+            </div>
+            <input
+              autoFocus
+              value={splitFilter}
+              onChange={(e) => setSplitFilter(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setSplitPicker(null);
+              }}
+              placeholder="Filter hosts or shells..."
+              className="w-full px-2 py-1 rounded bg-black/40 border border-[var(--border-subtle)] text-xs text-white focus:outline-none focus:border-[var(--border-accent)]"
+            />
+          </div>
+
+          <div className="max-h-64 overflow-y-auto py-1">
+            {!splitFilter.trim() && (
+              <button
+                onClick={() => handleSplitDuplicate(splitPicker.direction)}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-[var(--bg-hover)] text-[var(--text-primary)] font-medium"
+              >
+                <RotateCw className="w-3.5 h-3.5 text-[var(--accent-primary)] shrink-0" />
+                <span className="truncate">Duplicate: {pane.title}</span>
+              </button>
+            )}
+
+            {hosts.filter(
+              (h) =>
+                h.label.toLowerCase().includes(splitFilter.toLowerCase()) ||
+                h.address.toLowerCase().includes(splitFilter.toLowerCase())
+            ).length > 0 && (
+              <>
+                <div className="px-3 pt-1.5 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                  Saved SSH Hosts
+                </div>
+                {hosts
+                  .filter(
+                    (h) =>
+                      h.label.toLowerCase().includes(splitFilter.toLowerCase()) ||
+                      h.address.toLowerCase().includes(splitFilter.toLowerCase())
+                  )
+                  .map((h) => (
+                    <button
+                      key={h.id}
+                      onClick={() => {
+                        splitPane(tabId, pane.id, splitPicker.direction, {
+                          kind: "ssh",
+                          title: h.label || `${h.username}@${h.address}`,
+                          hostId: h.id,
+                        });
+                        setSplitPicker(null);
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-[var(--bg-hover)] text-[var(--text-primary)]"
+                    >
+                      <Server className="w-3.5 h-3.5 text-[var(--accent-primary)] shrink-0" />
+                      <div className="min-w-0">
+                        <div className="truncate font-medium">{h.label}</div>
+                        <div className="truncate text-[10px] text-[var(--text-muted)] font-mono">
+                          {h.username}@{h.address}
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+              </>
+            )}
+
+            {shells.filter((s) =>
+              s.name.toLowerCase().includes(splitFilter.toLowerCase())
+            ).length > 0 && (
+              <>
+                <div className="px-3 pt-1.5 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                  Local Terminals
+                </div>
+                {shells
+                  .filter((s) =>
+                    s.name.toLowerCase().includes(splitFilter.toLowerCase())
+                  )
+                  .map((sh) => (
+                    <button
+                      key={sh.id}
+                      onClick={() => {
+                        splitPane(tabId, pane.id, splitPicker.direction, {
+                          kind: "local",
+                          title: sh.name,
+                          shellProfile: sh,
+                        });
+                        setSplitPicker(null);
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-[var(--bg-hover)] text-[var(--text-primary)]"
+                    >
+                      <TerminalIcon className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                      <span className="truncate">{sh.name}</span>
+                    </button>
+                  ))}
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Floating Search Bar */}
       {searchOpen && (

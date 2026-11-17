@@ -8,6 +8,7 @@ import {
   FileCode2,
   Palette,
   CornerDownLeft,
+  Columns2,
 } from "lucide-react";
 import { useWorkspaceStore, collectPanes } from "../../store/useWorkspaceStore";
 import { useVaultStore } from "../../store/useVaultStore";
@@ -32,6 +33,7 @@ export const CommandPalette: React.FC = () => {
     openHostTerminal,
     openLocalTerminal,
     openDualSftpTab,
+    splitPane,
     tabs,
     activeTabId,
     injectSnippetToPane,
@@ -62,6 +64,14 @@ export const CommandPalette: React.FC = () => {
   const actions = useMemo<PaletteAction[]>(() => {
     const list: PaletteAction[] = [];
 
+    const activeTab = tabs.find((t) => t.id === activeTabId);
+    const activePane =
+      activeTab && activeTab.kind === "terminal"
+        ? collectPanes(activeTab.rootNode).find(
+            (p) => p.id === activeTab.activePaneId
+          )
+        : undefined;
+
     for (const h of hosts) {
       list.push({
         id: `ssh-${h.id}`,
@@ -71,6 +81,21 @@ export const CommandPalette: React.FC = () => {
         icon: <Server className="w-4 h-4 text-[var(--accent-primary)]" />,
         run: () => openHostTerminal(h),
       });
+      if (activeTab && activeTab.kind === "terminal" && activePane) {
+        list.push({
+          id: `split-${h.id}`,
+          category: "Split Pane",
+          title: `Split Right with: ${h.label}`,
+          subtitle: `${h.username}@${h.address}:${h.port}`,
+          icon: <Columns2 className="w-4 h-4 text-sky-400" />,
+          run: () =>
+            splitPane(activeTab.id, activePane.id, "horizontal", {
+              kind: "ssh",
+              title: h.label || `${h.username}@${h.address}`,
+              hostId: h.id,
+            }),
+        });
+      }
       list.push({
         id: `sftp-${h.id}`,
         category: "SFTP",
@@ -111,14 +136,6 @@ export const CommandPalette: React.FC = () => {
         },
       });
     }
-
-    const activeTab = tabs.find((t) => t.id === activeTabId);
-    const activePane =
-      activeTab && activeTab.kind === "terminal"
-        ? collectPanes(activeTab.rootNode).find(
-            (p) => p.id === activeTab.activePaneId
-          )
-        : undefined;
 
     if (activePane) {
       for (const snip of snippets) {
@@ -164,6 +181,7 @@ export const CommandPalette: React.FC = () => {
     openHostTerminal,
     openDualSftpTab,
     openLocalTerminal,
+    splitPane,
     refreshTunnels,
     injectSnippetToPane,
     setTheme,
