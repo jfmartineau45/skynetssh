@@ -117,6 +117,15 @@ body,
   background: var(--accent-primary);
 }
 
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
 /* Ensure xterm fills pane cleanly */
 .xterm {
   height: 100%;

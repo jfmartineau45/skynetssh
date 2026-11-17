@@ -35,7 +35,12 @@ export const TitleBar: React.FC = () => {
 
   const { status, lockVault } = useVaultStore();
   const [shellMenuOpen, setShellMenuOpen] = useState(false);
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number }>({
+    top: 40,
+    left: 160,
+  });
   const menuRef = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
@@ -65,7 +70,7 @@ export const TitleBar: React.FC = () => {
       {/* Left: Skynet Cyberdyne Brand + Tab Bar */}
       <div
         data-tauri-drag-region
-        className="flex items-center h-full min-w-0 flex-1 overflow-x-auto no-scrollbar"
+        className="flex items-center h-full min-w-0 flex-1 overflow-hidden"
       >
         {/* Brand Badge */}
         <div
@@ -84,7 +89,7 @@ export const TitleBar: React.FC = () => {
         </div>
 
         {/* Workspace Tabs */}
-        <div className="flex items-center h-full px-1.5 gap-1 overflow-x-auto">
+        <div className="flex items-center h-full px-1.5 gap-1 overflow-x-auto no-scrollbar">
           {tabs.map((tab) => {
             const isActive = tab.id === activeTabId;
             return (
@@ -132,14 +137,18 @@ export const TitleBar: React.FC = () => {
           })}
 
           {/* Quick + New Shell / SFTP Button */}
-          <div className="relative" ref={menuRef}>
+          <div className="shrink-0" ref={menuRef}>
             <button
+              ref={btnRef}
               onClick={() => {
-                if (shells.length > 0 && !shellMenuOpen) {
-                  setShellMenuOpen(true);
-                } else {
-                  setShellMenuOpen((v) => !v);
+                if (!shellMenuOpen && btnRef.current) {
+                  const r = btnRef.current.getBoundingClientRect();
+                  setMenuPos({
+                    top: r.bottom + 4,
+                    left: Math.min(r.left, window.innerWidth - 232),
+                  });
                 }
+                setShellMenuOpen((v) => !v);
               }}
               className="flex items-center gap-0.5 h-7 px-2 rounded-md text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition"
               title="Open Local Shell or Dual-Pane SFTP"
@@ -149,7 +158,10 @@ export const TitleBar: React.FC = () => {
             </button>
 
             {shellMenuOpen && (
-              <div className="absolute left-0 top-8 w-56 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-subtle)] shadow-2xl py-1.5 z-50">
+              <div
+                style={{ top: menuPos.top, left: menuPos.left }}
+                className="fixed w-56 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-accent)] shadow-2xl py-1.5 z-50"
+              >
                 <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
                   Local Terminals
                 </div>
