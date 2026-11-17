@@ -9,6 +9,7 @@ import type {
   SnippetRecord,
   SshFolderScan,
   SshKeyRecord,
+  TotpSetupPayload,
   TunnelRecord,
   VaultSnapshot,
   VaultStatus,
@@ -32,14 +33,19 @@ import {
   apiSniffSshFolder,
   apiTunnelListActive,
   apiVaultAddProfile,
+  apiVaultForgetDevice,
   apiVaultInit,
   apiVaultLock,
   apiVaultRemoveProfile,
   apiVaultSnapshot,
   apiVaultStatus,
   apiVaultSwitchProfile,
+  apiVaultTotpBeginSetup,
+  apiVaultTotpConfirmSetup,
+  apiVaultTotpDisable,
   apiVaultUnlock,
   apiVaultUnlockKeyring,
+  apiVaultUnlockTotp,
 } from "../lib/ipc";
 
 export type VaultSection =
@@ -76,10 +82,19 @@ interface VaultState {
 
   /* Actions */
   refreshStatus: () => Promise<void>;
-  initVault: (password: string, saveToKeyring: boolean) => Promise<void>;
-  unlockVault: (password: string, saveToKeyring: boolean) => Promise<void>;
+  initVault: (password: string, rememberDays: number) => Promise<void>;
+  unlockVault: (password: string, rememberDays: number) => Promise<void>;
   unlockWithKeyring: () => Promise<boolean>;
+  unlockWithTotp: (code: string, rememberDays: number) => Promise<void>;
   lockVault: () => Promise<void>;
+  forgetDevice: () => Promise<void>;
+  beginTotpSetup: () => Promise<TotpSetupPayload>;
+  confirmTotpSetup: (
+    secretBase32: string,
+    code: string,
+    rememberDays: number
+  ) => Promise<void>;
+  disableTotp: () => Promise<void>;
   reloadSnapshot: () => Promise<void>;
   refreshTunnels: () => Promise<void>;
   refreshGitStatus: () => Promise<void>;
@@ -174,7 +189,7 @@ export const useVaultStore = create<VaultState>((set, get) => ({
       if (status.unlocked) {
         const snap = await apiVaultSnapshot();
         set(applySnapshot(snap));
-      } else if (status.initialized && status.keyringSaved) {
+      } else if (status.initialized && status.deviceAutoUnlockValid) {
         await get().unlockWithKeyring();
       } else {
         set({
@@ -192,14 +207,14 @@ export const useVaultStore = create<VaultState>((set, get) => ({
     }
   },
 
-  initVault: async (password, saveToKeyring) => {
-    const snap = await apiVaultInit(password, saveToKeyring);
+  initVault: async (password, rememberDays) => {
+    const snap = await apiVaultInit(password, rememberDays);
     const status = await apiVaultStatus();
     set({ ...applySnapshot(snap), status });
   },
 
-  unlockVault: async (password, saveToKeyring) => {
-    const snap = await apiVaultUnlock(password, saveToKeyring);
+  unlockVault: async (password, rememberDays) => {
+    const snap = await apiVaultUnlock(password, rememberDays);
     const status = await apiVaultStatus();
     set({ ...applySnapshot(snap), status });
   },
@@ -211,7 +226,21 @@ export const useVaultStore = create<VaultState>((set, get) => ({
       set({ ...applySnapshot(snap), status });
       return true;
     } catch {
+      const status = await apiVaultStatus().catch(() => null);
+      if (status) set({ status });
       return false;
+    }
+  },
+
+  unlockWithTotp: async (code, rememberDays) => {
+    try {
+      const snap = await apiVaultUnlockTotp(code, rememberDays);
+      const status = await apiVaultStatus();
+      set({ ...applySnapshot(snap), status });
+    } catch (err) {
+      const status = await apiVaultStatus().catch(() => null);
+      if (status) set({ status });
+      throw err;
     }
   },
 
@@ -227,6 +256,37 @@ export const useVaultStore = create<VaultState>((set, get) => ({
       snippets: [],
       knownHosts: [],
     });
+  },
+
+  forgetDevice: async () => {
+    const status = await apiVaultForgetDevice();
+    set({
+      status,
+      groups: [],
+      hosts: [],
+      keys: [],
+      tunnels: [],
+      snippets: [],
+      knownHosts: [],
+    });
+  },
+
+  beginTotpSetup: async () => {
+    return await apiVaultTotpBeginSetup();
+  },
+
+  confirmTotpSetup: async (secretBase32, code, rememberDays) => {
+    const status = await apiVaultTotpConfirmSetup(
+      secretBase32,
+      code,
+      rememberDays
+    );
+    set({ status });
+  },
+
+  disableTotp: async () => {
+    const status = await apiVaultTotpDisable();
+    set({ status });
   },
 
   reloadSnapshot: async () => {

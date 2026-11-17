@@ -133,6 +133,12 @@ export interface SshFolderScan {
   knownHostsLines: number;
 }
 
+export interface TotpSetupPayload {
+  secretBase32: string;
+  otpauthUri: string;
+  qrSvg: string;
+}
+
 export interface VaultStatus {
   initialized: boolean;
   unlocked: boolean;
@@ -142,6 +148,11 @@ export interface VaultStatus {
   globalHotkey: string;
   keyringAvailable: boolean;
   keyringSaved: boolean;
+  deviceAutoUnlockValid: boolean;
+  deviceLeaseExpiresAt?: number | null;
+  totpEnabled: boolean;
+  totpAvailableOnDevice: boolean;
+  totpRemainingAttempts: number;
   hostCount: number;
   keyCount: number;
   tunnelCount: number;

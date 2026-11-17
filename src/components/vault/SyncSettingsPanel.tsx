@@ -11,12 +11,15 @@ import {
   Plus,
   Trash2,
   Keyboard,
+  Smartphone,
+  ShieldCheck,
+  Copy,
 } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useVaultStore } from "../../store/useVaultStore";
 import { useWorkspaceStore } from "../../store/useWorkspaceStore";
 import { APP_THEMES } from "../../lib/themes";
-import type { ThemeId } from "../../types/models";
+import type { ThemeId, TotpSetupPayload } from "../../types/models";
 import {
   apiGitInitRemote,
   apiGitSyncNow,
@@ -43,6 +46,10 @@ export const SyncSettingsPanel: React.FC = () => {
     switchVaultProfile,
     removeVaultProfile,
     setGlobalHotkey,
+    beginTotpSetup,
+    confirmTotpSetup,
+    disableTotp,
+    forgetDevice,
   } = useVaultStore();
 
   const {
@@ -62,6 +69,63 @@ export const SyncSettingsPanel: React.FC = () => {
 
   const [newProfileName, setNewProfileName] = useState("");
   const [newProfileKind, setNewProfileKind] = useState<"team" | "personal">("team");
+
+  const [totpSetup, setTotpSetup] = useState<TotpSetupPayload | null>(null);
+  const [totpVerifyCode, setTotpVerifyCode] = useState("");
+  const [totpRememberDays, setTotpRememberDays] = useState<number>(7);
+  const [totpBusy, setTotpBusy] = useState(false);
+
+  const handleStartTotpSetup = async () => {
+    setTotpBusy(true);
+    setMessage(null);
+    try {
+      const payload = await beginTotpSetup();
+      setTotpSetup(payload);
+      setTotpVerifyCode("");
+    } catch (err) {
+      setMessage(`TOTP setup error: ${String(err)}`);
+    } finally {
+      setTotpBusy(false);
+    }
+  };
+
+  const handleConfirmTotpSetup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!totpSetup) return;
+    const clean = totpVerifyCode.replace(/\D/g, "");
+    if (clean.length !== 6) {
+      setMessage("Enter the 6-digit code from your Authenticator app to confirm.");
+      return;
+    }
+    setTotpBusy(true);
+    setMessage(null);
+    try {
+      await confirmTotpSetup(totpSetup.secretBase32, clean, totpRememberDays);
+      setTotpSetup(null);
+      setTotpVerifyCode("");
+      setMessage(
+        "Authenticator (TOTP) enabled! You can now unlock this Vault with a 6-digit code OR Master Password (max 30-day device trust)."
+      );
+    } catch (err) {
+      setMessage(`TOTP verification failed: ${String(err)}`);
+    } finally {
+      setTotpBusy(false);
+    }
+  };
+
+  const handleDisableTotp = async () => {
+    setTotpBusy(true);
+    setMessage(null);
+    try {
+      await disableTotp();
+      setTotpSetup(null);
+      setMessage("Authenticator (TOTP) disabled for this Vault.");
+    } catch (err) {
+      setMessage(`Error disabling TOTP: ${String(err)}`);
+    } finally {
+      setTotpBusy(false);
+    }
+  };
 
   useEffect(() => {
     refreshGitStatus();
@@ -269,6 +333,192 @@ export const SyncSettingsPanel: React.FC = () => {
             <span>Select Folder & Link Vault</span>
           </button>
         </form>
+      </section>
+
+      {/* Section 1B: Authenticator (TOTP) Quick-Unlock & 30-Day Device Trust */}
+      <section className="p-5 rounded-2xl bg-[var(--bg-panel)] border border-[var(--border-subtle)] space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <Smartphone className="w-4 h-4 text-emerald-400" />
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-bold">
+                  Authenticator (TOTP) & 30-Day Device Trust
+                </h3>
+                {status?.totpEnabled ? (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-[10px] font-bold text-emerald-300">
+                    <ShieldCheck className="w-3 h-3" />
+                    TOTP ENABLED
+                  </span>
+                ) : (
+                  <span className="px-2 py-0.5 rounded-full bg-white/5 text-[10px] font-semibold text-[var(--text-muted)]">
+                    PASSWORD ONLY
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-[var(--text-secondary)] mt-0.5">
+                Unlock on enrolled PCs with either a <strong>6-digit Authenticator code</strong> or your <strong>Master Password</strong>. Device trust is hard-capped at <strong>30 days max</strong> and wipes after 3 wrong TOTP attempts.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {status?.totpEnabled ? (
+              <button
+                type="button"
+                disabled={totpBusy}
+                onClick={handleDisableTotp}
+                className="px-3 py-1.5 rounded-lg bg-red-500/15 hover:bg-red-500/25 border border-red-500/30 text-xs font-semibold text-red-300 transition"
+              >
+                Disable TOTP
+              </button>
+            ) : (
+              !totpSetup && (
+                <button
+                  type="button"
+                  disabled={totpBusy}
+                  onClick={handleStartTotpSetup}
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs font-semibold text-white transition"
+                >
+                  <Smartphone className="w-3.5 h-3.5" />
+                  <span>Enable Authenticator (TOTP)</span>
+                </button>
+              )
+            )}
+
+            {status?.keyringSaved && (
+              <button
+                type="button"
+                onClick={() => void forgetDevice()}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/5 hover:bg-red-500/20 border border-[var(--border-subtle)] hover:border-red-500/40 text-xs text-[var(--text-secondary)] hover:text-red-300 transition"
+                title="Immediately wipe cached Vault key from Windows Credential Manager and lock"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Forget This Device & Lock</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2.5 rounded-xl bg-black/25 border border-[var(--border-subtle)] text-xs text-[var(--text-secondary)]">
+          <span>
+            Current PC Credential Manager Trust:{" "}
+            <strong className="text-white">
+              {status?.keyringSaved
+                ? status.deviceAutoUnlockValid
+                  ? "Auto-Unlock Active"
+                  : "Locked (Prompts for TOTP or Master Password)"
+                : "Not Cached (Session Only)"}
+            </strong>
+          </span>
+          {status?.deviceLeaseExpiresAt && (
+            <span className="font-mono text-[11px] text-[var(--text-muted)]">
+              30-day hard expiry:{" "}
+              {new Date(status.deviceLeaseExpiresAt).toLocaleString()}
+            </span>
+          )}
+        </div>
+
+        {totpSetup && (
+          <form
+            onSubmit={handleConfirmTotpSetup}
+            className="p-4 rounded-xl bg-black/35 border border-emerald-500/40 flex flex-col md:flex-row items-center gap-5"
+          >
+            <div className="p-2.5 rounded-xl bg-white shrink-0 shadow-lg">
+              <img
+                src={`data:image/svg+xml;utf8,${encodeURIComponent(
+                  totpSetup.qrSvg
+                )}`}
+                alt="Scan with Authenticator App"
+                className="w-44 h-44 block"
+              />
+            </div>
+
+            <div className="flex-1 space-y-3 w-full">
+              <div>
+                <div className="text-xs font-bold text-white">
+                  1. Scan QR in Google / Microsoft Authenticator, 1Password, or Bitwarden
+                </div>
+                <p className="text-[11px] text-[var(--text-secondary)] mt-0.5">
+                  For Team SharePoint Vaults, the TOTP secret is stored AEAD-encrypted inside{" "}
+                  <code>auth/totp.enc.json</code> so teammates who unlock once with the Master Password can also use TOTP.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <code className="flex-1 px-3 py-1.5 rounded-lg bg-black/50 border border-[var(--border-subtle)] text-[11px] font-mono text-emerald-300 select-all break-all">
+                  {totpSetup.secretBase32}
+                </code>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(totpSetup.secretBase32);
+                    setMessage("Copied Base32 TOTP secret to clipboard.");
+                  }}
+                  className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-xs text-white"
+                  title="Copy Base32 Secret"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    2. Enter 6-Digit Code to Confirm
+                  </label>
+                  <input
+                    inputMode="numeric"
+                    maxLength={6}
+                    value={totpVerifyCode}
+                    onChange={(e) =>
+                      setTotpVerifyCode(
+                        e.target.value.replace(/\D/g, "").slice(0, 6)
+                      )
+                    }
+                    placeholder="000000"
+                    className="w-full px-3 py-2 rounded-lg bg-black/50 border border-[var(--border-subtle)] focus:border-emerald-400 text-sm font-mono tracking-[0.35em] text-center text-white focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    Remember This Device For
+                  </label>
+                  <select
+                    value={totpRememberDays}
+                    onChange={(e) =>
+                      setTotpRememberDays(Number(e.target.value))
+                    }
+                    className="w-full px-3 py-2 rounded-lg bg-black/50 border border-[var(--border-subtle)] text-xs text-white"
+                  >
+                    <option value={0}>Session only (ask TOTP every launch)</option>
+                    <option value={1}>1 day</option>
+                    <option value={7}>7 days</option>
+                    <option value={14}>14 days</option>
+                    <option value={30}>30 days (Max)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  type="submit"
+                  disabled={totpBusy}
+                  className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-xs font-semibold text-white transition"
+                >
+                  {totpBusy ? "Verifying..." : "Verify & Activate TOTP"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTotpSetup(null)}
+                  className="px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-xs text-[var(--text-secondary)]"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </form>
+        )}
       </section>
 
       {/* Section 2: Tabby Shortcuts & Global "Bring to Front" Hotkey */}

@@ -123,6 +123,14 @@ pub struct VaultProfile {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct TotpSetupPayload {
+    pub secret_base32: String,
+    pub otpauth_uri: String,
+    pub qr_svg: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VaultStatus {
     pub initialized: bool,
     pub unlocked: bool,
@@ -132,6 +140,11 @@ pub struct VaultStatus {
     pub global_hotkey: String,
     pub keyring_available: bool,
     pub keyring_saved: bool,
+    pub device_auto_unlock_valid: bool,
+    pub device_lease_expires_at: Option<i64>,
+    pub totp_enabled: bool,
+    pub totp_available_on_device: bool,
+    pub totp_remaining_attempts: u8,
     pub host_count: usize,
     pub key_count: usize,
     pub tunnel_count: usize,

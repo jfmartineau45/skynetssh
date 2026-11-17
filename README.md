@@ -27,10 +27,11 @@
 
 ### 2. Personal & Team Multi-Vaults (100% Conflict-Free SharePoint / OneDrive / Git Sync)
 - **Personal + Team SharePoint Vault Switcher:** Switch in one click between your **Personal Vault** and one or more shared **Team Vaults** (e.g. a shared OneDrive / SharePoint folder), with high-visibility **`PERSONAL`** vs **`TEAM · <Vault Name>`** badges in the titlebar, sidebar, tabs, and split panes so you never mix up Personal and Team Production servers.
-- **Two-Tier Envelope Cryptography:**
-  1. Each Vault's Master Password derives a 256-bit Key Encryption Key via **`Argon2id`** (64 MiB memory, 3 iterations).
-  2. That key wraps a random 256-bit Master Data Encryption Key (`DEK`) in `vault.meta.json`, with independent Windows Credential Manager caching per Vault profile.
-  3. Every host, SSH key, group, tunnel, snippet, and known-host fingerprint is encrypted individually with **`XChaCha20-Poly1305`** and AAD header binding (`collection:id:schema:updated_at:tombstone`) into its own `<uuid>.enc.json` file.
+- **Two-Tier Envelope Cryptography + Optional TOTP (RFC 6238) & 30-Day Device Trust:**
+  1. Each Vault's Master Password derives a 256-bit Key Encryption Key via **`Argon2id`** (64 MiB memory, 3 iterations) so synced SharePoint/OneDrive files remain 100% zero-knowledge encrypted.
+  2. That key wraps a random 256-bit Master Data Encryption Key (`DEK`) in `vault.meta.json`, with structured Windows Credential Manager (DPAPI) device leases capped strictly at **30 days maximum** (`Session only`, `1d`, `7d`, `14d`, or `30d`).
+  3. **Master Password OR 6-Digit Authenticator (TOTP):** Enroll Google/Microsoft Authenticator, 1Password, or Bitwarden via QR code (`auth/totp.enc.json`) to unlock enrolled PCs with either a **6-digit TOTP code** or your **Master Password**—protected by a **3-strike local wipe** (3 wrong TOTP attempts immediately purge the local Credential Manager cache and force Master Password entry).
+  4. Every host, SSH key, group, tunnel, snippet, and known-host fingerprint is encrypted individually with **`XChaCha20-Poly1305`** and AAD header binding (`collection:id:schema:updated_at:tombstone`) into its own `<uuid>.enc.json` file.
 - **Mathematically Conflict-Free SharePoint / OneDrive Sync:**
   - Unique `.tmp` atomic writes with automatic backoff retry for `OneDrive.exe` sharing locks (`ERROR_SHARING_VIOLATION`).
   - Deterministic **Last-Writer-Wins (`(updated_at, ciphertext)`) CRDT reconciliation** that automatically resolves and cleans up OneDrive `-{COMPUTERNAME}.enc.json`, Dropbox `conflicted copy`, and Syncthing `sync-conflict` sibling forks without duplicating hosts.

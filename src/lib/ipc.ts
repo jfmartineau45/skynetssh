@@ -9,6 +9,7 @@ import type {
   SnippetRecord,
   SshFolderScan,
   SshKeyRecord,
+  TotpSetupPayload,
   TransferProgressEvent,
   TunnelRecord,
   VaultSnapshot,
@@ -21,16 +22,39 @@ export const isTauriRuntime = (): boolean =>
 /* ─── Vault & Security Commands ─── */
 export const apiVaultStatus = () => invoke<VaultStatus>("vault_status");
 
-export const apiVaultInit = (masterPassword: string, saveToKeyring: boolean) =>
-  invoke<VaultSnapshot>("vault_init", { masterPassword, saveToKeyring });
+export const apiVaultInit = (masterPassword: string, rememberDays: number) =>
+  invoke<VaultSnapshot>("vault_init", { masterPassword, rememberDays });
 
-export const apiVaultUnlock = (masterPassword: string, saveToKeyring: boolean) =>
-  invoke<VaultSnapshot>("vault_unlock", { masterPassword, saveToKeyring });
+export const apiVaultUnlock = (masterPassword: string, rememberDays: number) =>
+  invoke<VaultSnapshot>("vault_unlock", { masterPassword, rememberDays });
 
 export const apiVaultUnlockKeyring = () =>
   invoke<VaultSnapshot>("vault_unlock_keyring");
 
+export const apiVaultUnlockTotp = (code: string, rememberDays: number) =>
+  invoke<VaultSnapshot>("vault_unlock_totp", { code, rememberDays });
+
 export const apiVaultLock = () => invoke<void>("vault_lock");
+
+export const apiVaultForgetDevice = () =>
+  invoke<VaultStatus>("vault_forget_device");
+
+export const apiVaultTotpBeginSetup = () =>
+  invoke<TotpSetupPayload>("vault_totp_begin_setup");
+
+export const apiVaultTotpConfirmSetup = (
+  secretBase32: string,
+  code: string,
+  rememberDays: number
+) =>
+  invoke<VaultStatus>("vault_totp_confirm_setup", {
+    secretBase32,
+    code,
+    rememberDays,
+  });
+
+export const apiVaultTotpDisable = () =>
+  invoke<VaultStatus>("vault_totp_disable");
 
 export const apiVaultSnapshot = () => invoke<VaultSnapshot>("vault_snapshot");
 

@@ -16,13 +16,42 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use crate::models::{
-    GroupRecord, HostRecord, KnownHostRecord, SnippetRecord, SshKeyRecord, TunnelRecord,
-    VaultProfile, VaultSnapshot, VaultStatus,
+    GroupRecord, HostRecord, KnownHostRecord, SnippetRecord, SshKeyRecord, TotpSetupPayload,
+    TunnelRecord, VaultProfile, VaultSnapshot, VaultStatus,
 };
 
+#[cfg(not(test))]
 const KEYRING_SERVICE: &str = "com.cyberdyne.skynetssh";
 const SCHEMA_VERSION: u32 = 1;
 pub const DEFAULT_GLOBAL_HOTKEY: &str = "CommandOrControl+Backquote";
+pub const DAY_MS: i64 = 86_400_000;
+pub const MAX_REMEMBER_DAYS: u32 = 30;
+pub const MAX_TOTP_ATTEMPTS: u8 = 3;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct TotpVaultRecord {
+    secret_base32: String,
+    enabled_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KeyringLease {
+    dek_b64: String,
+    #[serde(default)]
+    totp_secret_base32: Option<String>,
+    issued_at_ms: i64,
+    auto_unlock_until_ms: i64,
+    max_lease_until_ms: i64,
+    #[serde(default)]
+    failed_totp_attempts: u8,
+}
+
+#[cfg(test)]
+fn test_keyring_store() -> &'static std::sync::Mutex<HashMap<String, String>> {
+    static STORE: std::sync::OnceLock<std::sync::Mutex<HashMap<String, String>>> =
+        std::sync::OnceLock::new();
+    STORE.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
 
 fn validate_record_id(id: &str) -> Result<()> {
     if id.is_empty()
@@ -261,7 +290,7 @@ impl VaultEngine {
         if self.profiles.len() <= 1 {
             return Err(anyhow!("Cannot remove your only Vault profile."));
         }
-        Self::clear_dek_from_keyring(profile_id);
+        self.clear_keyring(profile_id);
         self.profiles.retain(|p| p.id != profile_id);
         if self.active_profile_id == profile_id {
             self.active_profile_id = self.profiles[0].id.clone();
@@ -282,18 +311,171 @@ impl VaultEngine {
         self.dek.is_some()
     }
 
-    fn keyring_account(profile_id: &str) -> String {
-        if profile_id == "personal" {
-            // Backward-compatible with existing personal vault credential
-            "vault_master_dek".into()
-        } else {
-            format!("vault_dek_{profile_id}")
+    fn keyring_account(&self, profile_id: &str) -> String {
+        #[cfg(test)]
+        {
+            format!("{}::{profile_id}", self.config_dir.to_string_lossy())
+        }
+        #[cfg(not(test))]
+        {
+            let _ = &self.config_dir;
+            if profile_id == "personal" {
+                // Backward-compatible with existing personal vault credential
+                "vault_master_dek".into()
+            } else {
+                format!("vault_dek_{profile_id}")
+            }
         }
     }
 
+    fn write_keyring_raw(&self, profile_id: &str, value: &str) -> Result<()> {
+        let account = self.keyring_account(profile_id);
+        #[cfg(test)]
+        {
+            test_keyring_store()
+                .lock()
+                .unwrap()
+                .insert(account, value.to_string());
+            Ok(())
+        }
+        #[cfg(not(test))]
+        {
+            let entry = keyring::Entry::new(KEYRING_SERVICE, &account)?;
+            entry.set_password(value)?;
+            Ok(())
+        }
+    }
+
+    fn read_keyring_raw(&self, profile_id: &str) -> Result<String> {
+        let account = self.keyring_account(profile_id);
+        #[cfg(test)]
+        {
+            test_keyring_store()
+                .lock()
+                .unwrap()
+                .get(&account)
+                .cloned()
+                .ok_or_else(|| anyhow!("No keyring credential found"))
+        }
+        #[cfg(not(test))]
+        {
+            let entry = keyring::Entry::new(KEYRING_SERVICE, &account)?;
+            Ok(entry.get_password()?)
+        }
+    }
+
+    fn clear_keyring(&self, profile_id: &str) {
+        let account = self.keyring_account(profile_id);
+        #[cfg(test)]
+        {
+            test_keyring_store().lock().unwrap().remove(&account);
+        }
+        #[cfg(not(test))]
+        {
+            if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, &account) {
+                let _ = entry.delete_credential();
+            }
+        }
+    }
+
+    fn save_keyring_lease(&self, profile_id: &str, lease: &KeyringLease) -> Result<()> {
+        let json = serde_json::to_string(lease)?;
+        self.write_keyring_raw(profile_id, &json)
+    }
+
+    /// Loads the structured `KeyringLease` (migrating legacy raw 32-byte Base64 DEKs cleanly)
+    /// and automatically purges the entry if the 30-day `max_lease_until_ms` has expired.
+    fn load_valid_lease_at(&self, profile_id: &str, now_ms: i64) -> Option<KeyringLease> {
+        let raw = self.read_keyring_raw(profile_id).ok()?;
+        let trimmed = raw.trim();
+
+        let lease = if let Ok(parsed) = serde_json::from_str::<KeyringLease>(trimmed) {
+            parsed
+        } else if let Ok(decoded) = B64.decode(trimmed) {
+            if decoded.len() == 32 {
+                let migrated = KeyringLease {
+                    dek_b64: trimmed.to_string(),
+                    totp_secret_base32: None,
+                    issued_at_ms: now_ms,
+                    auto_unlock_until_ms: now_ms + 7 * DAY_MS,
+                    max_lease_until_ms: now_ms + (MAX_REMEMBER_DAYS as i64) * DAY_MS,
+                    failed_totp_attempts: 0,
+                };
+                let _ = self.save_keyring_lease(profile_id, &migrated);
+                migrated
+            } else {
+                self.clear_keyring(profile_id);
+                return None;
+            }
+        } else {
+            self.clear_keyring(profile_id);
+            return None;
+        };
+
+        if now_ms >= lease.max_lease_until_ms {
+            self.clear_keyring(profile_id);
+            return None;
+        }
+        Some(lease)
+    }
+
+    fn decode_dek_b64(dek_b64: &str) -> Result<Zeroizing<[u8; 32]>> {
+        let decoded = B64.decode(dek_b64.trim())?;
+        if decoded.len() != 32 {
+            return Err(anyhow!("Invalid DEK length in OS keyring"));
+        }
+        let mut dek = Zeroizing::new([0u8; 32]);
+        dek.copy_from_slice(&decoded);
+        Ok(dek)
+    }
+
+    fn read_totp_record(&self) -> Result<Option<TotpVaultRecord>> {
+        Ok(self.read_collection::<TotpVaultRecord>("auth")?.into_iter().next())
+    }
+
+    fn has_totp_envelope_on_disk(&self) -> bool {
+        let path = self.vault_dir().join("auth").join("totp.enc.json");
+        let Ok(raw) = fs::read_to_string(path) else {
+            return false;
+        };
+        let Ok(env) = serde_json::from_str::<EncryptedEnvelope>(&raw) else {
+            return false;
+        };
+        !env.tombstone
+    }
+
     pub fn status(&self) -> VaultStatus {
+        self.status_at(chrono::Utc::now().timestamp_millis())
+    }
+
+    pub fn status_at(&self, now_ms: i64) -> VaultStatus {
         let active = self.active_profile().clone();
-        let keyring_saved = Self::load_dek_from_keyring(&active.id).is_ok();
+        let lease_opt = self.load_valid_lease_at(&active.id, now_ms);
+
+        let (
+            keyring_saved,
+            device_auto_unlock_valid,
+            device_lease_expires_at,
+            totp_available_on_device,
+            totp_remaining_attempts,
+        ) = if let Some(lease) = &lease_opt {
+            (
+                true,
+                now_ms < lease.auto_unlock_until_ms,
+                Some(lease.max_lease_until_ms),
+                lease.totp_secret_base32.is_some(),
+                MAX_TOTP_ATTEMPTS.saturating_sub(lease.failed_totp_attempts),
+            )
+        } else {
+            (false, false, None, false, MAX_TOTP_ATTEMPTS)
+        };
+
+        let totp_enabled = if self.is_unlocked() {
+            self.read_totp_record().ok().flatten().is_some()
+        } else {
+            totp_available_on_device || self.has_totp_envelope_on_disk()
+        };
+
         let snap = if self.is_unlocked() {
             self.snapshot().unwrap_or_default()
         } else {
@@ -309,6 +491,11 @@ impl VaultEngine {
             global_hotkey: self.global_hotkey.clone(),
             keyring_available: true,
             keyring_saved,
+            device_auto_unlock_valid,
+            device_lease_expires_at,
+            totp_enabled,
+            totp_available_on_device,
+            totp_remaining_attempts,
             host_count: snap.hosts.len(),
             key_count: snap.keys.len(),
             tunnel_count: snap.tunnels.len(),
@@ -333,10 +520,49 @@ impl VaultEngine {
         Ok(kek)
     }
 
-    pub fn initialize(&mut self, master_password: &str, save_to_keyring: bool) -> Result<VaultSnapshot> {
+    fn apply_master_password_lease(
+        &self,
+        dek: &[u8; 32],
+        remember_days: u32,
+        totp_secret_base32: Option<String>,
+        now_ms: i64,
+    ) {
+        let pid = &self.active_profile_id;
+        let clamped_days = remember_days.min(MAX_REMEMBER_DAYS);
+        if clamped_days > 0 || totp_secret_base32.is_some() {
+            let max_lease_until_ms = now_ms + (MAX_REMEMBER_DAYS as i64) * DAY_MS;
+            let auto_unlock_until_ms = if clamped_days > 0 {
+                now_ms + (clamped_days as i64) * DAY_MS
+            } else {
+                0
+            };
+            let lease = KeyringLease {
+                dek_b64: B64.encode(dek),
+                totp_secret_base32,
+                issued_at_ms: now_ms,
+                auto_unlock_until_ms,
+                max_lease_until_ms,
+                failed_totp_attempts: 0,
+            };
+            let _ = self.save_keyring_lease(pid, &lease);
+        } else {
+            self.clear_keyring(pid);
+        }
+    }
+
+    pub fn initialize(&mut self, master_password: &str, remember_days: u32) -> Result<VaultSnapshot> {
+        let now_ms = chrono::Utc::now().timestamp_millis();
         let vdir = self.vault_dir();
         fs::create_dir_all(&vdir)?;
-        for sub in ["groups", "hosts", "keys", "tunnels", "snippets", "known_hosts"] {
+        for sub in [
+            "groups",
+            "hosts",
+            "keys",
+            "tunnels",
+            "snippets",
+            "known_hosts",
+            "auth",
+        ] {
             fs::create_dir_all(vdir.join(sub))?;
         }
 
@@ -377,18 +603,25 @@ impl VaultEngine {
 
         atomic_write(&self.meta_path(), serde_json::to_string_pretty(&meta)?.as_bytes())?;
 
-        let pid = self.active_profile_id.clone();
-        if save_to_keyring {
-            let _ = Self::save_dek_to_keyring(&pid, &dek);
-        } else {
-            Self::clear_dek_from_keyring(&pid);
-        }
-
+        self.apply_master_password_lease(&dek, remember_days, None, now_ms);
         self.dek = Some(dek);
         self.snapshot()
     }
 
-    pub fn unlock(&mut self, master_password: &str, save_to_keyring: bool) -> Result<VaultSnapshot> {
+    pub fn unlock(&mut self, master_password: &str, remember_days: u32) -> Result<VaultSnapshot> {
+        self.unlock_at(
+            master_password,
+            remember_days,
+            chrono::Utc::now().timestamp_millis(),
+        )
+    }
+
+    pub fn unlock_at(
+        &mut self,
+        master_password: &str,
+        remember_days: u32,
+        now_ms: i64,
+    ) -> Result<VaultSnapshot> {
         let raw = fs::read_to_string(self.meta_path())
             .context("Vault metadata file not found")?;
         let meta: VaultMetaFile = serde_json::from_str(&raw)?;
@@ -422,54 +655,221 @@ impl VaultEngine {
 
         let mut dek = Zeroizing::new([0u8; 32]);
         dek.copy_from_slice(&unwrapped);
+        self.dek = Some(dek.clone());
 
-        let pid = self.active_profile_id.clone();
-        if save_to_keyring {
-            let _ = Self::save_dek_to_keyring(&pid, &dek);
-        } else {
-            Self::clear_dek_from_keyring(&pid);
-        }
+        let totp_secret = self
+            .read_totp_record()
+            .ok()
+            .flatten()
+            .map(|r| r.secret_base32);
+        self.apply_master_password_lease(&dek, remember_days, totp_secret, now_ms);
 
-        self.dek = Some(dek);
         self.snapshot()
     }
 
     pub fn unlock_with_keyring(&mut self) -> Result<VaultSnapshot> {
+        self.unlock_with_keyring_at(chrono::Utc::now().timestamp_millis())
+    }
+
+    pub fn unlock_with_keyring_at(&mut self, now_ms: i64) -> Result<VaultSnapshot> {
         if !self.is_initialized() {
             return Err(anyhow!("Vault is not initialized yet"));
         }
-        let dek = Self::load_dek_from_keyring(&self.active_profile_id)?;
+        let pid = self.active_profile_id.clone();
+        let lease = self
+            .load_valid_lease_at(&pid, now_ms)
+            .ok_or_else(|| anyhow!("Device trust expired or not saved"))?;
+
+        if now_ms >= lease.auto_unlock_until_ms {
+            return Err(anyhow!("Interactive unlock required (TOTP or Master Password)"));
+        }
+
+        let dek = Self::decode_dek_b64(&lease.dek_b64)?;
         self.dek = Some(dek);
         self.snapshot()
     }
 
+    pub fn unlock_with_totp(&mut self, code: &str, remember_days: u32) -> Result<VaultSnapshot> {
+        self.unlock_with_totp_at(code, remember_days, chrono::Utc::now().timestamp_millis())
+    }
+
+    pub fn unlock_with_totp_at(
+        &mut self,
+        code: &str,
+        remember_days: u32,
+        now_ms: i64,
+    ) -> Result<VaultSnapshot> {
+        if !self.is_initialized() {
+            return Err(anyhow!("Vault is not initialized yet"));
+        }
+        let pid = self.active_profile_id.clone();
+        let mut lease = self.load_valid_lease_at(&pid, now_ms).ok_or_else(|| {
+            anyhow!("30-day device trust expired or missing. Please unlock with your Master Password.")
+        })?;
+
+        let secret = lease
+            .totp_secret_base32
+            .clone()
+            .ok_or_else(|| anyhow!("TOTP is not enrolled on this device yet."))?;
+
+        let unix_secs = (now_ms.max(0) / 1000) as u64;
+        let valid = crate::totp::verify_totp_code(&secret, code, unix_secs)?;
+
+        if !valid {
+            lease.failed_totp_attempts = lease.failed_totp_attempts.saturating_add(1);
+            if lease.failed_totp_attempts >= MAX_TOTP_ATTEMPTS {
+                self.clear_keyring(&pid);
+                return Err(anyhow!(
+                    "3 incorrect TOTP codes — device cache wiped for security. Master Password required."
+                ));
+            }
+            let _ = self.save_keyring_lease(&pid, &lease);
+            let rem = MAX_TOTP_ATTEMPTS - lease.failed_totp_attempts;
+            return Err(anyhow!(
+                "Invalid 6-digit TOTP code ({rem} attempt{} left before device wipe).",
+                if rem == 1 { "" } else { "s" }
+            ));
+        }
+
+        let dek = Self::decode_dek_b64(&lease.dek_b64)?;
+        self.dek = Some(dek);
+
+        // Sync TOTP record from Vault in case a teammate disabled/rotated it on SharePoint
+        let vault_totp = self
+            .read_totp_record()
+            .ok()
+            .flatten()
+            .map(|r| r.secret_base32);
+
+        lease.failed_totp_attempts = 0;
+        lease.totp_secret_base32 = vault_totp;
+        let clamped_days = remember_days.min(MAX_REMEMBER_DAYS);
+        lease.auto_unlock_until_ms = if clamped_days > 0 {
+            (now_ms + (clamped_days as i64) * DAY_MS).min(lease.max_lease_until_ms)
+        } else {
+            0
+        };
+
+        if lease.auto_unlock_until_ms > 0 || lease.totp_secret_base32.is_some() {
+            let _ = self.save_keyring_lease(&pid, &lease);
+        } else {
+            self.clear_keyring(&pid);
+        }
+
+        self.snapshot()
+    }
+
+    pub fn totp_begin_setup(&self) -> Result<TotpSetupPayload> {
+        self.require_dek()?;
+        crate::totp::generate_totp_setup(&self.active_profile().name)
+    }
+
+    pub fn totp_confirm_setup(
+        &self,
+        secret_base32: &str,
+        code: &str,
+        remember_days: u32,
+    ) -> Result<VaultStatus> {
+        self.totp_confirm_setup_at(
+            secret_base32,
+            code,
+            remember_days,
+            chrono::Utc::now().timestamp_millis(),
+        )
+    }
+
+    pub fn totp_confirm_setup_at(
+        &self,
+        secret_base32: &str,
+        code: &str,
+        remember_days: u32,
+        now_ms: i64,
+    ) -> Result<VaultStatus> {
+        let dek = self.require_dek()?;
+        let normalized: String = secret_base32
+            .chars()
+            .filter(|c| !c.is_whitespace() && *c != '=')
+            .map(|c| c.to_ascii_uppercase())
+            .collect();
+        crate::totp::decode_base32_secret(&normalized)?;
+
+        let unix_secs = (now_ms.max(0) / 1000) as u64;
+        if !crate::totp::verify_totp_code(&normalized, code, unix_secs)? {
+            return Err(anyhow!(
+                "6-digit TOTP code did not match. Check your Authenticator app and PC clock."
+            ));
+        }
+
+        let rec = TotpVaultRecord {
+            secret_base32: normalized.clone(),
+            enabled_at: now_ms,
+        };
+        self.write_record("auth", "totp", now_ms, &rec)?;
+
+        let pid = &self.active_profile_id;
+        let clamped_days = remember_days.min(MAX_REMEMBER_DAYS);
+        let existing = self.load_valid_lease_at(pid, now_ms);
+        let (issued_at_ms, max_lease_until_ms) = match &existing {
+            Some(l) => (l.issued_at_ms, l.max_lease_until_ms),
+            None => (now_ms, now_ms + (MAX_REMEMBER_DAYS as i64) * DAY_MS),
+        };
+        let auto_unlock_until_ms = if clamped_days > 0 {
+            (now_ms + (clamped_days as i64) * DAY_MS).min(max_lease_until_ms)
+        } else {
+            0
+        };
+
+        let lease = KeyringLease {
+            dek_b64: B64.encode(dek),
+            totp_secret_base32: Some(normalized),
+            issued_at_ms,
+            auto_unlock_until_ms,
+            max_lease_until_ms,
+            failed_totp_attempts: 0,
+        };
+        let _ = self.save_keyring_lease(pid, &lease);
+
+        Ok(self.status_at(now_ms))
+    }
+
+    pub fn totp_disable(&self) -> Result<VaultStatus> {
+        self.require_dek()?;
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        self.tombstone_record("auth", "totp")?;
+
+        let pid = &self.active_profile_id;
+        if let Some(mut lease) = self.load_valid_lease_at(pid, now_ms) {
+            lease.totp_secret_base32 = None;
+            if now_ms < lease.auto_unlock_until_ms {
+                let _ = self.save_keyring_lease(pid, &lease);
+            } else {
+                self.clear_keyring(pid);
+            }
+        }
+        Ok(self.status_at(now_ms))
+    }
+
     pub fn lock(&mut self) {
+        self.lock_at(chrono::Utc::now().timestamp_millis());
+    }
+
+    pub fn lock_at(&mut self, now_ms: i64) {
         self.dek = None;
-        Self::clear_dek_from_keyring(&self.active_profile_id);
-    }
-
-    fn save_dek_to_keyring(profile_id: &str, dek: &[u8; 32]) -> Result<()> {
-        let entry = keyring::Entry::new(KEYRING_SERVICE, &Self::keyring_account(profile_id))?;
-        entry.set_password(&B64.encode(dek))?;
-        Ok(())
-    }
-
-    fn clear_dek_from_keyring(profile_id: &str) {
-        if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, &Self::keyring_account(profile_id)) {
-            let _ = entry.delete_credential();
+        let pid = self.active_profile_id.clone();
+        if let Some(mut lease) = self.load_valid_lease_at(&pid, now_ms) {
+            if lease.totp_secret_base32.is_some() {
+                lease.auto_unlock_until_ms = 0;
+                let _ = self.save_keyring_lease(&pid, &lease);
+                return;
+            }
         }
+        self.clear_keyring(&pid);
     }
 
-    fn load_dek_from_keyring(profile_id: &str) -> Result<Zeroizing<[u8; 32]>> {
-        let entry = keyring::Entry::new(KEYRING_SERVICE, &Self::keyring_account(profile_id))?;
-        let encoded = entry.get_password()?;
-        let decoded = B64.decode(encoded)?;
-        if decoded.len() != 32 {
-            return Err(anyhow!("Invalid DEK in OS keyring"));
-        }
-        let mut dek = Zeroizing::new([0u8; 32]);
-        dek.copy_from_slice(&decoded);
-        Ok(dek)
+    pub fn forget_device_and_lock(&mut self) {
+        self.dek = None;
+        let pid = self.active_profile_id.clone();
+        self.clear_keyring(&pid);
     }
 
     fn require_dek(&self) -> Result<&[u8; 32]> {
@@ -806,7 +1206,7 @@ mod tests {
         let mut engine = VaultEngine::new(temp_dir.clone()).unwrap();
         assert!(!engine.is_initialized());
 
-        engine.initialize("T800-Cyberdyne!", false).unwrap();
+        engine.initialize("T800-Cyberdyne!", 0).unwrap();
         assert!(engine.is_initialized());
         assert!(engine.is_unlocked());
 
@@ -818,7 +1218,7 @@ mod tests {
 
         engine.lock();
         assert!(!engine.is_unlocked());
-        assert!(engine.unlock("wrong-password", false).is_err());
+        assert!(engine.unlock("wrong-password", 0).is_err());
 
         fs::write(
             engine.vault_dir().join("hosts").join("corrupt.enc.json"),
@@ -826,7 +1226,7 @@ mod tests {
         )
         .unwrap();
 
-        let snap = engine.unlock("T800-Cyberdyne!", false).unwrap();
+        let snap = engine.unlock("T800-Cyberdyne!", 0).unwrap();
         assert_eq!(snap.hosts.len(), 1);
         assert_eq!(
             engine.get_host("h-1").unwrap().password.as_deref(),
@@ -845,7 +1245,7 @@ mod tests {
         let temp_dir =
             std::env::temp_dir().join(format!("skynet_sharepoint_test_{}", uuid::Uuid::new_v4()));
         let mut engine = VaultEngine::new(temp_dir.clone()).unwrap();
-        engine.initialize("TeamSharePointPass!", false).unwrap();
+        engine.initialize("TeamSharePointPass!", 0).unwrap();
 
         let hosts_dir = engine.vault_dir().join("hosts");
 
@@ -871,6 +1271,93 @@ mod tests {
         assert_eq!(snap.hosts[0].address, "10.0.1.99");
         assert!(!hosts_dir.join("h-shared-LAPTOP-BOB.enc.json").exists());
         assert!(hosts_dir.join("h-shared.enc.json").exists());
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn test_totp_30_day_lease_and_3_strike_wipe() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("skynet_totp_lease_test_{}", uuid::Uuid::new_v4()));
+        let mut engine = VaultEngine::new(temp_dir.clone()).unwrap();
+        let t0 = 1_700_000_100_000i64;
+
+        // 1. Initialize and unlock requesting 999 days -> clamped strictly to 30 days max!
+        engine.initialize("Master-Cyberdyne-99!", 0).unwrap();
+        engine
+            .save_host(&sample_host("h-totp", "Bastion", "10.0.0.5", t0))
+            .unwrap();
+        engine.lock_at(t0);
+        engine.unlock_at("Master-Cyberdyne-99!", 999, t0).unwrap();
+
+        let st_initial = engine.status_at(t0);
+        assert!(st_initial.device_auto_unlock_valid);
+        assert_eq!(
+            st_initial.device_lease_expires_at,
+            Some(t0 + 30 * DAY_MS)
+        );
+
+        // 2. Enroll TOTP with 7-day auto-unlock window
+        let setup = engine.totp_begin_setup().unwrap();
+        let secret_bytes = crate::totp::decode_base32_secret(&setup.secret_base32).unwrap();
+        let valid_code_t0 = format!(
+            "{:06}",
+            crate::totp::compute_totp_at_step(&secret_bytes, (t0 as u64 / 1000) / 30).unwrap()
+        );
+        let st_enrolled = engine
+            .totp_confirm_setup_at(&setup.secret_base32, &valid_code_t0, 7, t0)
+            .unwrap();
+        assert!(st_enrolled.totp_enabled);
+        assert!(st_enrolled.totp_available_on_device);
+
+        // 3. Manual lock disables silent auto-unlock, but keeps TOTP quick-unlock available!
+        engine.lock_at(t0 + 1000);
+        assert!(engine.unlock_with_keyring_at(t0 + 2000).is_err());
+        assert!(engine.status_at(t0 + 2000).totp_available_on_device);
+
+        // 4. Unlock with valid 6-digit TOTP at Day 8 (with 7-day remember) succeeds
+        let t_day8 = t0 + 8 * DAY_MS;
+        let code_day8 = format!(
+            "{:06}",
+            crate::totp::compute_totp_at_step(&secret_bytes, (t_day8 as u64 / 1000) / 30).unwrap()
+        );
+        let snap = engine.unlock_with_totp_at(&code_day8, 7, t_day8).unwrap();
+        assert_eq!(snap.hosts.len(), 1);
+        assert!(engine.unlock_with_keyring_at(t_day8 + DAY_MS).is_ok());
+
+        // 5. At Day 31 (> 30 days since Master Password), both auto-unlock AND TOTP expire & wipe!
+        engine.dek = None;
+        let t_day31 = t0 + 31 * DAY_MS;
+        assert!(engine.unlock_with_keyring_at(t_day31).is_err());
+        let code_day31 = format!(
+            "{:06}",
+            crate::totp::compute_totp_at_step(&secret_bytes, (t_day31 as u64 / 1000) / 30).unwrap()
+        );
+        assert!(engine.unlock_with_totp_at(&code_day31, 7, t_day31).is_err());
+        assert!(!engine.status_at(t_day31).keyring_saved);
+        assert!(!engine.status_at(t_day31).totp_available_on_device);
+        // Vault itself still reports totp_enabled from envelope header so UI can prompt Master Password
+        assert!(engine.status_at(t_day31).totp_enabled);
+
+        // 6. Re-unlock with Master Password at Day 31 restores TOTP lease, then test 3-strike wipe!
+        engine
+            .unlock_at("Master-Cyberdyne-99!", 0, t_day31)
+            .unwrap();
+        engine.lock_at(t_day31 + 1000);
+        assert_eq!(engine.status_at(t_day31 + 1000).totp_remaining_attempts, 3);
+
+        // Strike 1
+        assert!(engine.unlock_with_totp_at("000000", 0, t_day31 + 2000).is_err());
+        assert_eq!(engine.status_at(t_day31 + 2000).totp_remaining_attempts, 2);
+        // Strike 2
+        assert!(engine.unlock_with_totp_at("000000", 0, t_day31 + 3000).is_err());
+        assert_eq!(engine.status_at(t_day31 + 3000).totp_remaining_attempts, 1);
+        // Strike 3 -> immediate keyring wipe! Even the real TOTP code must now be rejected!
+        assert!(engine.unlock_with_totp_at("000000", 0, t_day31 + 4000).is_err());
+        assert!(!engine.status_at(t_day31 + 4000).totp_available_on_device);
+        assert!(engine
+            .unlock_with_totp_at(&code_day31, 0, t_day31 + 4000)
+            .is_err());
 
         let _ = fs::remove_dir_all(temp_dir);
     }

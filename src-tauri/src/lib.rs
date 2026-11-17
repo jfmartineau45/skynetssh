@@ -3,6 +3,7 @@ pub mod pty;
 pub mod sftp;
 pub mod ssh;
 pub mod sync;
+pub mod totp;
 pub mod tunnel;
 pub mod vault;
 
@@ -19,8 +20,8 @@ use tauri_plugin_global_shortcut::{
 
 use crate::models::{
     ActiveTunnelRuntime, DirectoryListing, GitSyncStatus, GroupRecord, HostRecord, ShellProfile,
-    SnippetRecord, SshFolderScan, SshKeyRecord, TransferProgressEvent, TunnelRecord, VaultSnapshot,
-    VaultStatus,
+    SnippetRecord, SshFolderScan, SshKeyRecord, TotpSetupPayload, TransferProgressEvent,
+    TunnelRecord, VaultSnapshot, VaultStatus,
 };
 use crate::pty::PtyManager;
 use crate::ssh::SshPool;
@@ -106,24 +107,24 @@ fn vault_status(state: State<'_, AppState>) -> CmdResult<VaultStatus> {
 #[tauri::command]
 fn vault_init(
     master_password: String,
-    save_to_keyring: bool,
+    remember_days: u32,
     state: State<'_, AppState>,
 ) -> CmdResult<VaultSnapshot> {
     let mut guard = state.vault.lock().map_err(err_str)?;
     guard
-        .initialize(&master_password, save_to_keyring)
+        .initialize(&master_password, remember_days)
         .map_err(err_str)
 }
 
 #[tauri::command]
 fn vault_unlock(
     master_password: String,
-    save_to_keyring: bool,
+    remember_days: u32,
     state: State<'_, AppState>,
 ) -> CmdResult<VaultSnapshot> {
     let mut guard = state.vault.lock().map_err(err_str)?;
     guard
-        .unlock(&master_password, save_to_keyring)
+        .unlock(&master_password, remember_days)
         .map_err(err_str)
 }
 
@@ -131,6 +132,18 @@ fn vault_unlock(
 fn vault_unlock_keyring(state: State<'_, AppState>) -> CmdResult<VaultSnapshot> {
     let mut guard = state.vault.lock().map_err(err_str)?;
     guard.unlock_with_keyring().map_err(err_str)
+}
+
+#[tauri::command]
+fn vault_unlock_totp(
+    code: String,
+    remember_days: u32,
+    state: State<'_, AppState>,
+) -> CmdResult<VaultSnapshot> {
+    let mut guard = state.vault.lock().map_err(err_str)?;
+    guard
+        .unlock_with_totp(&code, remember_days)
+        .map_err(err_str)
 }
 
 #[tauri::command]
@@ -143,6 +156,44 @@ async fn vault_lock(state: State<'_, AppState>) -> CmdResult<()> {
     state.ssh.disconnect_all().await;
     sftp::cleanup_temp_edits();
     Ok(())
+}
+
+#[tauri::command]
+async fn vault_forget_device(state: State<'_, AppState>) -> CmdResult<VaultStatus> {
+    let status = {
+        let mut guard = state.vault.lock().map_err(err_str)?;
+        guard.forget_device_and_lock();
+        guard.status()
+    };
+    state.tunnels.stop_all().await;
+    state.ssh.disconnect_all().await;
+    sftp::cleanup_temp_edits();
+    Ok(status)
+}
+
+#[tauri::command]
+fn vault_totp_begin_setup(state: State<'_, AppState>) -> CmdResult<TotpSetupPayload> {
+    let guard = state.vault.lock().map_err(err_str)?;
+    guard.totp_begin_setup().map_err(err_str)
+}
+
+#[tauri::command]
+fn vault_totp_confirm_setup(
+    secret_base32: String,
+    code: String,
+    remember_days: u32,
+    state: State<'_, AppState>,
+) -> CmdResult<VaultStatus> {
+    let guard = state.vault.lock().map_err(err_str)?;
+    guard
+        .totp_confirm_setup(&secret_base32, &code, remember_days)
+        .map_err(err_str)
+}
+
+#[tauri::command]
+fn vault_totp_disable(state: State<'_, AppState>) -> CmdResult<VaultStatus> {
+    let guard = state.vault.lock().map_err(err_str)?;
+    guard.totp_disable().map_err(err_str)
 }
 
 #[tauri::command]
@@ -715,7 +766,12 @@ pub fn run() {
             vault_init,
             vault_unlock,
             vault_unlock_keyring,
+            vault_unlock_totp,
             vault_lock,
+            vault_forget_device,
+            vault_totp_begin_setup,
+            vault_totp_confirm_setup,
+            vault_totp_disable,
             vault_snapshot,
             vault_set_path,
             vault_add_profile,
