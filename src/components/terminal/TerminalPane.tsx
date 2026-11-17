@@ -38,6 +38,9 @@ interface Props {
 export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
   const {
     theme,
+    terminalFontSize,
+    copyOnSelect,
+    rightClickPaste,
     shells,
     setActivePane,
     updatePane,
@@ -50,7 +53,7 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
     dispatchInputFromPane,
   } = useWorkspaceStore();
 
-  const { hosts, snippets } = useVaultStore();
+  const { status, hosts, snippets } = useVaultStore();
 
   const containerRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
@@ -88,12 +91,23 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
   const inBroadcast =
     broadcastEnabled && broadcastPaneIds.includes(pane.id);
 
-  // Sync theme changes dynamically into xterm
+  // Sync theme & font size changes dynamically into xterm
   useEffect(() => {
     if (xtermRef.current) {
       xtermRef.current.options.theme = APP_THEMES[theme].xterm;
     }
   }, [theme]);
+
+  useEffect(() => {
+    if (xtermRef.current && fitRef.current) {
+      xtermRef.current.options.fontSize = terminalFontSize;
+      try {
+        fitRef.current.fit();
+      } catch {
+        // ignore hidden layout
+      }
+    }
+  }, [terminalFontSize]);
 
   const startBackendSession = useCallback(
     async (term: XTerm) => {
@@ -190,7 +204,7 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
     const term = new XTerm({
       cursorBlink: true,
       cursorStyle: "bar",
-      fontSize: 13.5,
+      fontSize: terminalFontSize,
       lineHeight: 1.22,
       fontFamily:
         '"Cascadia Mono", "JetBrains Mono", "Consolas", ui-monospace, monospace',
@@ -227,14 +241,58 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
       dispatchInputFromPane(paneRef.current, encoder.encode(data));
     });
 
+    // Tabby-style Copy-on-Select
+    const selDisposable = term.onSelectionChange(() => {
+      if (useWorkspaceStore.getState().copyOnSelect && term.hasSelection()) {
+        navigator.clipboard.writeText(term.getSelection()).catch(() => {});
+      }
+    });
+
     term.attachCustomKeyEventHandler((ev) => {
-      if (ev.type === "keydown" && ev.ctrlKey && ev.shiftKey) {
-        if (ev.key.toLowerCase() === "f") {
+      if (ev.type !== "keydown") return true;
+
+      // Let global app shortcuts bubble up instead of sending escape codes to shell
+      if (
+        (ev.ctrlKey && ev.key.toLowerCase() === "k") ||
+        (ev.ctrlKey && ev.key === "Tab") ||
+        (ev.ctrlKey && /^[1-9]$/.test(ev.key)) ||
+        (ev.ctrlKey && ["=", "+", "-", "0"].includes(ev.key)) ||
+        (ev.ctrlKey && ev.shiftKey && ["t", "w", "n"].includes(ev.key.toLowerCase()))
+      ) {
+        return false;
+      }
+
+      // Tabby Split Shortcuts: Alt+Shift+D (Right) / Alt+Shift+E (Down)
+      if (ev.altKey && ev.shiftKey) {
+        const k = ev.key.toLowerCase();
+        if (k === "d" || k === "e") {
+          setSplitFilter("");
+          setSplitPicker({
+            direction: k === "d" ? "horizontal" : "vertical",
+            top: 80,
+            left: Math.max(20, window.innerWidth / 2 - 120),
+          });
+          return false;
+        }
+      }
+
+      if (ev.ctrlKey && ev.shiftKey) {
+        const k = ev.key.toLowerCase();
+        if (k === "f") {
           setSearchOpen((v) => !v);
           return false;
         }
-        if (ev.key.toLowerCase() === "c" && term.hasSelection()) {
+        if (k === "c" && term.hasSelection()) {
           navigator.clipboard.writeText(term.getSelection());
+          return false;
+        }
+        if (k === "v") {
+          navigator.clipboard
+            .readText()
+            .then((txt) => {
+              if (txt) dispatchInputFromPane(paneRef.current, encoder.encode(txt));
+            })
+            .catch(() => {});
           return false;
         }
       }
@@ -267,6 +325,7 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
     return () => {
       if (resizeTimer) clearTimeout(resizeTimer);
       ro.disconnect();
+      selDisposable.dispose();
       dataDisposable.dispose();
       const sid = sessionIdRef.current;
       sessionIdRef.current = null;
@@ -349,6 +408,18 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
           <span className="font-medium text-[var(--text-primary)] truncate">
             {pane.title}
           </span>
+          {pane.kind === "ssh" && (
+            <span
+              className={`px-1.5 py-0.2 rounded text-[9px] font-bold uppercase tracking-wider shrink-0 ${
+                pane.vaultKind === "team"
+                  ? "bg-sky-500/20 text-sky-300 border border-sky-400/35"
+                  : "bg-emerald-500/15 text-emerald-300"
+              }`}
+              title={`Vault: ${pane.vaultName ?? "Personal"}`}
+            >
+              {pane.vaultKind === "team" ? `TEAM · ${pane.vaultName ?? ""}` : "PERSONAL"}
+            </span>
+          )}
 
           {broadcastEnabled && (
             <button
@@ -478,6 +549,8 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
                           kind: "ssh",
                           title: h.label || `${h.username}@${h.address}`,
                           hostId: h.id,
+                          vaultKind: status?.activeProfile.kind ?? "personal",
+                          vaultName: status?.activeProfile.name ?? "Personal",
                         });
                         setSplitPicker(null);
                       }}
@@ -572,8 +645,25 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
         </div>
       )}
 
-      {/* xterm.js Canvas / WebGL Surface */}
-      <div ref={containerRef} className="flex-1 w-full min-h-0 overflow-hidden" />
+      {/* xterm.js Canvas / WebGL Surface (Tabby Right-Click Paste support) */}
+      <div
+        ref={containerRef}
+        onContextMenu={(e) => {
+          if (rightClickPaste) {
+            e.preventDefault();
+            navigator.clipboard
+              .readText()
+              .then((txt) => {
+                if (txt) {
+                  const enc = new TextEncoder();
+                  dispatchInputFromPane(paneRef.current, enc.encode(txt));
+                }
+              })
+              .catch(() => {});
+          }
+        }}
+        className="flex-1 w-full min-h-0 overflow-hidden"
+      />
     </div>
   );
 };

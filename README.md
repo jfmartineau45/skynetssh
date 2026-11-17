@@ -25,14 +25,17 @@
 - **Smart Quick-Connect & Save Bar:** Paste `ssh -p 2222 ubuntu@10.0.1.5` or IPv6 `root@[2001:db8::1]:2200` into the top bar (or straight into the Address field) to auto-parse credentials, save to the Vault, and connect in one step.
 - **1-Click Migration:** Import existing hosts directly from `~/.ssh/config` or a **Termius JSON** export, plus 1-click host card duplication.
 
-### 2. Encrypted Sync-Safe Vault ($0/Month Cloud or Git Sync)
+### 2. Personal & Team Multi-Vaults (100% Conflict-Free SharePoint / OneDrive / Git Sync)
+- **Personal + Team SharePoint Vault Switcher:** Switch in one click between your **Personal Vault** and one or more shared **Team Vaults** (e.g. a shared OneDrive / SharePoint folder), with high-visibility **`PERSONAL`** vs **`TEAM · <Vault Name>`** badges in the titlebar, sidebar, tabs, and split panes so you never mix up Personal and Team Production servers.
 - **Two-Tier Envelope Cryptography:**
-  1. Your Master Password derives a 256-bit Key Encryption Key via **`Argon2id`** (64 MiB memory, 3 iterations).
-  2. That key wraps a random 256-bit Master Data Encryption Key (`DEK`) in `vault.meta.json`, held in `Zeroizing` memory when unlocked.
+  1. Each Vault's Master Password derives a 256-bit Key Encryption Key via **`Argon2id`** (64 MiB memory, 3 iterations).
+  2. That key wraps a random 256-bit Master Data Encryption Key (`DEK`) in `vault.meta.json`, with independent Windows Credential Manager caching per Vault profile.
   3. Every host, SSH key, group, tunnel, snippet, and known-host fingerprint is encrypted individually with **`XChaCha20-Poly1305`** and AAD header binding (`collection:id:schema:updated_at:tombstone`) into its own `<uuid>.enc.json` file.
-- **Conflict-Free Multi-PC Sync:** Because every item lives in its own atomic `<uuid>.enc.json` file (with soft-delete tombstones), syncing your Vault folder via **Git**, **Dropbox**, **Syncthing**, **OneDrive**, or **iCloud** avoids binary SQLite merge corruption.
-- **Built-in Git Sync:** Configure a private Git remote in **Sync & Themes** and click **Pull, Commit & Push Now** (with automatic `git rebase --abort` protection on conflicts).
-- **OS Keychain Convenience & Hard Lock:** Optional **Windows Credential Manager** caching for instant unlock on launch; clicking the titlebar **Lock** icon purges the key from RAM and Credential Manager, stops active tunnels, disconnects SSH sessions, and wipes temporary SFTP edit files.
+- **Mathematically Conflict-Free SharePoint / OneDrive Sync:**
+  - Unique `.tmp` atomic writes with automatic backoff retry for `OneDrive.exe` sharing locks (`ERROR_SHARING_VIOLATION`).
+  - Deterministic **Last-Writer-Wins (`(updated_at, ciphertext)`) CRDT reconciliation** that automatically resolves and cleans up OneDrive `-{COMPUTERNAME}.enc.json`, Dropbox `conflicted copy`, and Syncthing `sync-conflict` sibling forks without duplicating hosts.
+  - **Live Folder Watcher:** When a teammate saves a host into your shared OneDrive / SharePoint folder, every teammate's open SkynetSSH window updates automatically in real time.
+- **~/.ssh Auto-Sniffing:** Non-destructively scans `~/.ssh` on launch to detect existing private keys (`id_ed25519`, custom keys, `.pem`, passphrase-protected keys) and `~/.ssh/config` hosts (`Host`, `IdentityFile`, `ProxyJump`) for 1-click Vault import.
 
 ### 3. Tabby-Style Multi-Pane Terminal & Local Shells
 - **Recursive Binary Split Panes:** Split any tab horizontally or vertically with smooth drag-resizable dividers—freely mixing remote SSH servers and local shells in the same tab.
@@ -123,13 +126,22 @@ flowchart TB
 
 ---
 
-## Keyboard Shortcuts
+## Keyboard Shortcuts (Tabby-Style)
 
 | Shortcut | Action |
 | :--- | :--- |
-| `Ctrl + K` | Open global **Command Palette** (hosts, shells, SFTP, tunnels, snippets, themes) |
+| `` Ctrl + ` `` *(Global OS-Wide)* | **Bring to Front / Quake Hide Toggle** from anywhere in Windows (customizable in Settings) |
+| `Ctrl + K` | Open global **Command Palette** (hosts, split-with, shells, SFTP, tunnels, snippets, themes) |
+| `Ctrl + Shift + T` | Open new Local Terminal tab |
+| `Ctrl + Shift + N` | Open **New Host** slide-over Vault inspector |
+| `Ctrl + Shift + W` | Close active tab |
+| `Ctrl + Tab` / `Ctrl + Shift + Tab` | Cycle next / previous tab |
+| `Ctrl + 1 .. 9` | Jump directly to Tab 1..9 (`Ctrl + 1` = Vault) |
+| `Alt + Shift + D` | Split active pane **Right** (opens Host / Shell picker) |
+| `Alt + Shift + E` | Split active pane **Down** (opens Host / Shell picker) |
 | `Ctrl + Shift + F` | Toggle inline search inside the active terminal pane |
-| `Ctrl + Shift + C` | Copy selected terminal text to clipboard |
+| `Ctrl + Shift + C` / `V` | Copy / Paste in terminal (plus automatic **Copy-on-Select** & **Right-Click Paste**) |
+| `Ctrl + =` / `-` / `0` | Zoom terminal font size in / out / reset |
 | `Middle-Click` on Tab | Close terminal or SFTP tab |
 | `Double-Click` Host Card | Open new SSH terminal tab for that host |
 

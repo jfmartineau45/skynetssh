@@ -7,6 +7,7 @@ import type {
   HostRecord,
   KnownHostRecord,
   SnippetRecord,
+  SshFolderScan,
   SshKeyRecord,
   TunnelRecord,
   VaultSnapshot,
@@ -27,11 +28,16 @@ import {
   apiSaveHost,
   apiSaveSnippet,
   apiSaveTunnel,
+  apiSetGlobalHotkey,
+  apiSniffSshFolder,
   apiTunnelListActive,
+  apiVaultAddProfile,
   apiVaultInit,
   apiVaultLock,
+  apiVaultRemoveProfile,
   apiVaultSnapshot,
   apiVaultStatus,
+  apiVaultSwitchProfile,
   apiVaultUnlock,
   apiVaultUnlockKeyring,
 } from "../lib/ipc";
@@ -61,6 +67,7 @@ interface VaultState {
 
   activeTunnels: Record<string, ActiveTunnelRuntime>;
   gitStatus: GitSyncStatus | null;
+  sshScan: SshFolderScan | null;
 
   /* Host Key TOFU Verification Modal Queue */
   pendingHostKeyPrompts: HostKeyPromptEvent[];
@@ -76,6 +83,16 @@ interface VaultState {
   reloadSnapshot: () => Promise<void>;
   refreshTunnels: () => Promise<void>;
   refreshGitStatus: () => Promise<void>;
+  refreshSshScan: () => Promise<void>;
+
+  addVaultProfile: (
+    name: string,
+    kind: "personal" | "team",
+    path: string
+  ) => Promise<void>;
+  switchVaultProfile: (profileId: string) => Promise<void>;
+  removeVaultProfile: (profileId: string) => Promise<void>;
+  setGlobalHotkey: (hotkey: string) => Promise<void>;
 
   saveGroup: (g: GroupRecord) => Promise<GroupRecord>;
   deleteGroup: (id: string) => Promise<void>;
@@ -135,6 +152,7 @@ export const useVaultStore = create<VaultState>((set, get) => ({
   knownHosts: [],
   activeTunnels: {},
   gitStatus: null,
+  sshScan: null,
 
   pendingHostKeyPrompts: [],
   enqueueHostKeyPrompt: (ev) =>
@@ -157,9 +175,18 @@ export const useVaultStore = create<VaultState>((set, get) => ({
         const snap = await apiVaultSnapshot();
         set(applySnapshot(snap));
       } else if (status.initialized && status.keyringSaved) {
-        // Attempt silent Windows Credential Manager unlock
         await get().unlockWithKeyring();
+      } else {
+        set({
+          groups: [],
+          hosts: [],
+          keys: [],
+          tunnels: [],
+          snippets: [],
+          knownHosts: [],
+        });
       }
+      await get().refreshSshScan();
     } catch {
       set({ loading: false });
     }
@@ -206,6 +233,36 @@ export const useVaultStore = create<VaultState>((set, get) => ({
     const snap = await apiVaultSnapshot();
     const status = await apiVaultStatus();
     set({ ...applySnapshot(snap), status });
+    get().refreshSshScan();
+  },
+
+  refreshSshScan: async () => {
+    try {
+      const sshScan = await apiSniffSshFolder();
+      set({ sshScan });
+    } catch {
+      // ignore outside tauri
+    }
+  },
+
+  addVaultProfile: async (name, kind, path) => {
+    await apiVaultAddProfile(name, kind, path);
+    await get().refreshStatus();
+  },
+
+  switchVaultProfile: async (profileId) => {
+    await apiVaultSwitchProfile(profileId);
+    await get().refreshStatus();
+  },
+
+  removeVaultProfile: async (profileId) => {
+    await apiVaultRemoveProfile(profileId);
+    await get().refreshStatus();
+  },
+
+  setGlobalHotkey: async (hotkey) => {
+    const status = await apiSetGlobalHotkey(hotkey);
+    set({ status });
   },
 
   refreshTunnels: async () => {

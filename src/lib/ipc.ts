@@ -7,6 +7,7 @@ import type {
   ShellProfile,
   SftpEntry,
   SnippetRecord,
+  SshFolderScan,
   SshKeyRecord,
   TransferProgressEvent,
   TunnelRecord,
@@ -35,6 +36,24 @@ export const apiVaultSnapshot = () => invoke<VaultSnapshot>("vault_snapshot");
 
 export const apiVaultSetPath = (newPath: string) =>
   invoke<VaultStatus>("vault_set_path", { newPath });
+
+export const apiVaultAddProfile = (
+  name: string,
+  kind: "personal" | "team",
+  path: string
+) => invoke<VaultStatus>("vault_add_profile", { name, kind, path });
+
+export const apiVaultSwitchProfile = (profileId: string) =>
+  invoke<VaultStatus>("vault_switch_profile", { profileId });
+
+export const apiVaultRemoveProfile = (profileId: string) =>
+  invoke<VaultStatus>("vault_remove_profile", { profileId });
+
+export const apiSetGlobalHotkey = (hotkey: string) =>
+  invoke<VaultStatus>("app_set_global_hotkey", { hotkey });
+
+export const apiSniffSshFolder = () =>
+  invoke<SshFolderScan>("ssh_sniff_folder");
 
 /* ─── Vault Item CRUD ─── */
 export const apiSaveGroup = (group: GroupRecord) =>

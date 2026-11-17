@@ -13,8 +13,13 @@ import {
   ChevronDown,
   Server,
   Zap,
+  Users,
+  User,
+  Check,
+  FolderOpen,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { open } from "@tauri-apps/plugin-dialog";
 import { useWorkspaceStore } from "../../store/useWorkspaceStore";
 import { useVaultStore } from "../../store/useVaultStore";
 import { isTauriRuntime } from "../../lib/ipc";
@@ -44,6 +49,8 @@ export const TitleBar: React.FC = () => {
     lockVault,
     setActiveSection,
     setNewHostDrawerRequested,
+    switchVaultProfile,
+    addVaultProfile,
   } = useVaultStore();
 
   const [shellMenuOpen, setShellMenuOpen] = useState(false);
@@ -55,10 +62,28 @@ export const TitleBar: React.FC = () => {
   const menuRef = useRef<HTMLDivElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
 
+  /* Vault Switcher (Personal vs Team SharePoint) */
+  const [vaultMenuOpen, setVaultMenuOpen] = useState(false);
+  const [vaultMenuPos, setVaultMenuPos] = useState<{ top: number; left: number }>({
+    top: 40,
+    left: 12,
+  });
+  const [addingTeamVault, setAddingTeamVault] = useState(false);
+  const [newVaultName, setNewVaultName] = useState("");
+  const [newVaultKind, setNewVaultKind] = useState<"team" | "personal">("team");
+  const vaultMenuRef = useRef<HTMLDivElement>(null);
+  const vaultBtnRef = useRef<HTMLButtonElement>(null);
+
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setShellMenuOpen(false);
+      }
+      if (
+        vaultMenuRef.current &&
+        !vaultMenuRef.current.contains(e.target as Node)
+      ) {
+        setVaultMenuOpen(false);
       }
     };
     window.addEventListener("mousedown", onClick);
@@ -73,6 +98,20 @@ export const TitleBar: React.FC = () => {
   };
   const handleClose = () => {
     if (isTauriRuntime()) getCurrentWindow().close();
+  };
+
+  const activeProfile = status?.activeProfile;
+  const isTeamVault = activeProfile?.kind === "team";
+
+  const handlePickAndAddVaultFolder = async () => {
+    if (!newVaultName.trim()) return;
+    const dir = await open({ directory: true, multiple: false });
+    if (!dir || Array.isArray(dir)) return;
+    await addVaultProfile(newVaultName.trim(), newVaultKind, dir);
+    setNewVaultName("");
+    setAddingTeamVault(false);
+    setVaultMenuOpen(false);
+    setActiveTab("vault");
   };
 
   const q = menuQuery.trim().toLowerCase();
@@ -128,7 +167,7 @@ export const TitleBar: React.FC = () => {
       data-tauri-drag-region
       className="h-10 flex items-center justify-between border-b border-[var(--border-subtle)] bg-[var(--bg-panel)] select-none shrink-0 z-30"
     >
-      {/* Left: Skynet Cyberdyne Brand + Tab Bar */}
+      {/* Left: Brand + Active Vault (Personal vs Team) Pill + Tab Bar */}
       <div
         data-tauri-drag-region
         className="flex items-center h-full min-w-0 flex-1 overflow-hidden"
@@ -136,7 +175,7 @@ export const TitleBar: React.FC = () => {
         {/* Brand Badge */}
         <div
           data-tauri-drag-region
-          className="flex items-center gap-2 px-3.5 h-full border-r border-[var(--border-subtle)] shrink-0"
+          className="flex items-center gap-2 px-3 h-full border-r border-[var(--border-subtle)] shrink-0"
         >
           <div className="relative flex items-center justify-center w-5 h-5 rounded bg-[var(--accent-glow)] border border-[var(--border-accent)]">
             <div className="w-2 h-2 rounded-full bg-[var(--accent-primary)] shadow-[0_0_8px_var(--accent-primary)]" />
@@ -147,6 +186,163 @@ export const TitleBar: React.FC = () => {
           >
             SKYNET<span className="text-[var(--accent-primary)]">//</span>SSH
           </span>
+        </div>
+
+        {/* High-Visibility Personal vs Team Vault Indicator & Switcher */}
+        <div className="px-1.5 border-r border-[var(--border-subtle)] h-full flex items-center shrink-0" ref={vaultMenuRef}>
+          <button
+            ref={vaultBtnRef}
+            onClick={() => {
+              if (!vaultMenuOpen && vaultBtnRef.current) {
+                const r = vaultBtnRef.current.getBoundingClientRect();
+                setVaultMenuPos({ top: r.bottom + 4, left: r.left });
+              }
+              setVaultMenuOpen((v) => !v);
+            }}
+            className={`flex items-center gap-1.5 h-6 px-2.5 rounded-md text-[11px] font-semibold transition ${
+              isTeamVault
+                ? "bg-sky-500/20 text-sky-300 border border-sky-400/50 shadow-[0_0_10px_rgba(56,189,248,0.20)]"
+                : "bg-emerald-500/15 text-emerald-300 border border-emerald-500/35"
+            }`}
+            title={`Active Vault: ${activeProfile?.name ?? "Personal"} (${activeProfile?.path ?? ""}) — Click to switch Personal / Team Vault`}
+          >
+            {isTeamVault ? (
+              <Users className="w-3.5 h-3.5 text-sky-300 shrink-0" />
+            ) : (
+              <User className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+            )}
+            <span className="max-w-[120px] truncate">
+              {isTeamVault
+                ? `TEAM · ${activeProfile?.name}`
+                : activeProfile?.name || "Personal"}
+            </span>
+            <ChevronDown className="w-3 h-3 opacity-75 shrink-0" />
+          </button>
+
+          {vaultMenuOpen && (
+            <div
+              style={{ top: vaultMenuPos.top, left: vaultMenuPos.left }}
+              className="fixed w-80 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-accent)] shadow-2xl p-2 z-50 text-xs"
+            >
+              <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
+                Switch Encrypted Vault
+              </div>
+
+              <div className="space-y-1 my-1">
+                {(status?.profiles ?? []).map((prof) => {
+                  const active = prof.id === activeProfile?.id;
+                  const team = prof.kind === "team";
+                  return (
+                    <button
+                      key={prof.id}
+                      onClick={async () => {
+                        setVaultMenuOpen(false);
+                        if (!active) await switchVaultProfile(prof.id);
+                      }}
+                      className={`w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg text-left transition ${
+                        active
+                          ? "bg-[var(--bg-hover)] border border-[var(--border-accent)]"
+                          : "hover:bg-[var(--bg-hover)] border border-transparent"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        {team ? (
+                          <Users className="w-4 h-4 text-sky-400 shrink-0" />
+                        ) : (
+                          <User className="w-4 h-4 text-emerald-400 shrink-0" />
+                        )}
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-semibold text-[var(--text-primary)] truncate">
+                              {prof.name}
+                            </span>
+                            <span
+                              className={`text-[9px] px-1.5 py-0.2 rounded uppercase font-bold ${
+                                team
+                                  ? "bg-sky-500/20 text-sky-300"
+                                  : "bg-emerald-500/20 text-emerald-300"
+                              }`}
+                            >
+                              {prof.kind}
+                            </span>
+                          </div>
+                          <div className="text-[10px] font-mono text-[var(--text-muted)] truncate">
+                            {prof.path}
+                          </div>
+                        </div>
+                      </div>
+                      {active && (
+                        <Check className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="border-t border-[var(--border-subtle)] pt-2 mt-1">
+                {!addingTeamVault ? (
+                  <button
+                    onClick={() => setAddingTeamVault(true)}
+                    className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg bg-sky-500/15 hover:bg-sky-500/25 border border-sky-400/35 text-sky-200 font-semibold transition"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add / Link Team SharePoint or OneDrive Vault</span>
+                  </button>
+                ) : (
+                  <div className="space-y-2 p-2 rounded-lg bg-black/30 border border-[var(--border-subtle)]">
+                    <input
+                      autoFocus
+                      value={newVaultName}
+                      onChange={(e) => setNewVaultName(e.target.value)}
+                      placeholder="Vault Name (e.g. Ops Team SharePoint)"
+                      className="w-full px-2.5 py-1.5 rounded bg-black/50 border border-[var(--border-subtle)] text-xs text-white focus:outline-none focus:border-sky-400"
+                    />
+                    <div className="grid grid-cols-2 gap-1 p-0.5 rounded bg-black/40">
+                      <button
+                        type="button"
+                        onClick={() => setNewVaultKind("team")}
+                        className={`py-1 rounded text-[11px] font-semibold ${
+                          newVaultKind === "team"
+                            ? "bg-sky-600 text-white"
+                            : "text-[var(--text-muted)]"
+                        }`}
+                      >
+                        Team Vault
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setNewVaultKind("personal")}
+                        className={`py-1 rounded text-[11px] font-semibold ${
+                          newVaultKind === "personal"
+                            ? "bg-emerald-600 text-white"
+                            : "text-[var(--text-muted)]"
+                        }`}
+                      >
+                        Personal Vault
+                      </button>
+                    </div>
+                    <div className="flex gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setAddingTeamVault(false)}
+                        className="px-2.5 py-1.5 rounded bg-white/5 text-[var(--text-secondary)]"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handlePickAndAddVaultFolder}
+                        className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded bg-sky-600 hover:bg-sky-500 text-white font-semibold"
+                      >
+                        <FolderOpen className="w-3.5 h-3.5" />
+                        <span>Pick Shared Folder...</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Workspace Tabs */}
@@ -160,7 +356,7 @@ export const TitleBar: React.FC = () => {
                 onAuxClick={(e) => {
                   if (e.button === 1 && tab.kind !== "vault") closeTab(tab.id);
                 }}
-                className={`group relative flex items-center gap-2 h-7 px-3 rounded-md text-xs font-medium cursor-pointer transition-all shrink-0 ${
+                className={`group relative flex items-center gap-1.5 h-7 px-2.5 rounded-md text-xs font-medium cursor-pointer transition-all shrink-0 ${
                   isActive
                     ? "bg-[var(--bg-elevated)] text-[var(--text-primary)] border border-[var(--border-accent)] shadow-sm"
                     : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] border border-transparent"
@@ -179,7 +375,16 @@ export const TitleBar: React.FC = () => {
                   <FolderSync className="w-3.5 h-3.5 text-amber-400" />
                 )}
 
-                <span className="max-w-[150px] truncate">{tab.title}</span>
+                {tab.kind === "terminal" && tab.vaultKind === "team" && (
+                  <span
+                    className="px-1 py-0.2 rounded bg-sky-500/20 text-sky-300 text-[9px] font-bold uppercase tracking-wider"
+                    title={`Connected from Team Vault: ${tab.vaultName}`}
+                  >
+                    TEAM
+                  </span>
+                )}
+
+                <span className="max-w-[140px] truncate">{tab.title}</span>
 
                 {tab.kind !== "vault" && (
                   <button
@@ -188,7 +393,7 @@ export const TitleBar: React.FC = () => {
                       closeTab(tab.id);
                     }}
                     className="ml-0.5 p-0.5 rounded opacity-60 hover:opacity-100 hover:bg-white/10 transition"
-                    title="Close tab"
+                    title="Close tab (Ctrl+Shift+W)"
                   >
                     <X className="w-3 h-3" />
                   </button>
@@ -224,7 +429,6 @@ export const TitleBar: React.FC = () => {
                 style={{ top: menuPos.top, left: menuPos.left }}
                 className="fixed w-72 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-accent)] shadow-2xl py-2 z-50"
               >
-                {/* Search / Quick SSH user@host Input */}
                 <div className="px-2.5 pb-2 border-b border-[var(--border-subtle)] space-y-1.5">
                   <input
                     autoFocus
@@ -253,8 +457,7 @@ export const TitleBar: React.FC = () => {
                     >
                       <Zap className="w-3.5 h-3.5 shrink-0" />
                       <span className="truncate">
-                        Connect & Save{" "}
-                        {parsedQuickSsh.username ?? "root"}@
+                        Connect & Save to {isTeamVault ? "Team" : "Personal"}:{" "}
                         {parsedQuickSsh.address}
                       </span>
                     </button>
@@ -265,16 +468,17 @@ export const TitleBar: React.FC = () => {
                     className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs font-medium text-[var(--text-primary)] transition"
                   >
                     <Plus className="w-3.5 h-3.5 text-[var(--accent-primary)] shrink-0" />
-                    <span>New Host in Vault...</span>
+                    <span>
+                      New Host in {activeProfile?.name || "Vault"}...
+                    </span>
                   </button>
                 </div>
 
                 <div className="max-h-72 overflow-y-auto py-1">
-                  {/* Saved SSH Hosts */}
                   {filteredHosts.length > 0 && (
                     <>
                       <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-                        Saved SSH Hosts ({filteredHosts.length})
+                        {isTeamVault ? "Team" : "Personal"} SSH Hosts ({filteredHosts.length})
                       </div>
                       {filteredHosts.map((h) => (
                         <button
@@ -300,9 +504,8 @@ export const TitleBar: React.FC = () => {
                     </>
                   )}
 
-                  {/* Local Terminals */}
                   <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-                    Local Terminals
+                    Local Terminals (Ctrl+Shift+T)
                   </div>
                   {filteredShells.length === 0 ? (
                     <div className="px-3 py-1.5 text-xs text-[var(--text-muted)]">
@@ -377,7 +580,7 @@ export const TitleBar: React.FC = () => {
           <button
             onClick={() => lockVault()}
             className="flex items-center justify-center w-6 h-6 rounded text-[var(--text-secondary)] hover:text-[var(--accent-primary)] hover:bg-[var(--bg-hover)] transition"
-            title="Lock Encrypted Vault"
+            title="Lock Active Vault"
           >
             <Lock className="w-3.5 h-3.5" />
           </button>

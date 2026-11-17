@@ -1,9 +1,10 @@
 import React, { useState } from "react";
-import { Shield, KeyRound, Lock, Eye, EyeOff } from "lucide-react";
+import { Shield, KeyRound, Lock, Eye, EyeOff, Users, User } from "lucide-react";
 import { useVaultStore } from "../../store/useVaultStore";
 
 export const VaultUnlockModal: React.FC = () => {
-  const { status, initVault, unlockVault } = useVaultStore();
+  const { status, initVault, unlockVault, switchVaultProfile } =
+    useVaultStore();
 
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -15,6 +16,8 @@ export const VaultUnlockModal: React.FC = () => {
   if (!status || status.unlocked) return null;
 
   const isSetup = !status.initialized;
+  const activeProf = status.activeProfile;
+  const isTeam = activeProf?.kind === "team";
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -34,6 +37,8 @@ export const VaultUnlockModal: React.FC = () => {
       } else {
         await unlockVault(password, saveToKeyring);
       }
+      setPassword("");
+      setConfirmPassword("");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -47,30 +52,67 @@ export const VaultUnlockModal: React.FC = () => {
         onSubmit={handleSubmit}
         className="w-full max-w-md rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-accent)] shadow-2xl p-6"
       >
-        <div className="flex items-center gap-3.5 mb-5">
-          <div className="w-11 h-11 rounded-xl bg-[var(--accent-glow)] border border-[var(--border-accent)] flex items-center justify-center text-[var(--accent-primary)]">
-            {isSetup ? (
-              <Shield className="w-6 h-6" />
-            ) : (
-              <Lock className="w-6 h-6" />
-            )}
-          </div>
-          <div>
-            <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--accent-primary)]">
-              CYBERDYNE VAULT ENCRYPTION
+        <div className="flex items-center justify-between gap-2 mb-4">
+          <div className="flex items-center gap-3.5">
+            <div
+              className={`w-11 h-11 rounded-xl flex items-center justify-center border ${
+                isTeam
+                  ? "bg-sky-500/20 border-sky-400/50 text-sky-300"
+                  : "bg-[var(--accent-glow)] border-[var(--border-accent)] text-[var(--accent-primary)]"
+              }`}
+            >
+              {isSetup ? (
+                <Shield className="w-6 h-6" />
+              ) : isTeam ? (
+                <Users className="w-6 h-6" />
+              ) : (
+                <Lock className="w-6 h-6" />
+              )}
             </div>
-            <h2 className="text-base font-bold text-[var(--text-primary)]">
-              {isSetup
-                ? "Initialize Encrypted Host Vault"
-                : "Unlock SkynetSSH Vault"}
-            </h2>
+            <div>
+              <div className="flex items-center gap-1.5">
+                <span
+                  className={`text-[10px] font-bold uppercase tracking-[0.18em] ${
+                    isTeam ? "text-sky-300" : "text-[var(--accent-primary)]"
+                  }`}
+                >
+                  {isTeam ? "TEAM VAULT" : "PERSONAL VAULT"}
+                </span>
+              </div>
+              <h2 className="text-base font-bold text-[var(--text-primary)]">
+                {isSetup
+                  ? `Initialize ${activeProf?.name ?? "Vault"}`
+                  : `Unlock ${activeProf?.name ?? "Vault"}`}
+              </h2>
+            </div>
           </div>
+
+          {status.profiles.length > 1 && (
+            <select
+              value={activeProf.id}
+              onChange={(e) => {
+                setError(null);
+                switchVaultProfile(e.target.value);
+              }}
+              className="px-2 py-1 rounded-lg bg-black/40 border border-[var(--border-subtle)] text-[11px] text-[var(--text-primary)]"
+              title="Switch Vault Profile"
+            >
+              {status.profiles.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.kind === "team" ? "👥 " : "👤 "}
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
 
         <p className="text-xs text-[var(--text-secondary)] leading-relaxed mb-4">
           {isSetup
-            ? "Your hosts, SSH keys, passphrases, tunnels, and snippets are encrypted locally with Argon2id + XChaCha20-Poly1305 so you can sync safely over Git, Dropbox, or Syncthing for $0/mo."
-            : "Enter your Master Password to decrypt your saved hosts and SSH keys."}
+            ? isTeam
+              ? "Set the shared Team Master Password for this SharePoint / OneDrive folder. Every teammate with folder access and this password can sync conflict-free."
+              : "Your hosts, SSH keys, passphrases, tunnels, and snippets are encrypted locally with Argon2id + XChaCha20-Poly1305."
+            : "Enter the Master Password to decrypt this Vault."}
         </p>
 
         {error && (
@@ -90,7 +132,7 @@ export const VaultUnlockModal: React.FC = () => {
                 type={showPw ? "text" : "password"}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="Enter strong master password..."
+                placeholder="Enter master password..."
                 className="w-full pl-3 pr-9 py-2 rounded-lg bg-black/40 border border-[var(--border-subtle)] focus:border-[var(--border-accent)] text-xs text-white focus:outline-none"
               />
               <button
@@ -131,8 +173,8 @@ export const VaultUnlockModal: React.FC = () => {
                 className="rounded accent-[var(--accent-primary)]"
               />
               <span>
-                Remember vault key in Windows Credential Manager (instant unlock
-                on launch)
+                Remember this {isTeam ? "Team" : "Personal"} Vault key in Windows
+                Credential Manager
               </span>
             </label>
           )}
@@ -143,18 +185,19 @@ export const VaultUnlockModal: React.FC = () => {
           disabled={busy}
           className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-primary-hover)] disabled:opacity-50 text-xs font-semibold text-white transition shadow-lg"
         >
-          <KeyRound className="w-4 h-4" />
+          {isTeam ? <Users className="w-4 h-4" /> : <User className="w-4 h-4" />}
+          <KeyRound className="w-3.5 h-3.5" />
           <span>
             {busy
               ? "Deriving Argon2id Key..."
               : isSetup
-              ? "Create Encrypted Vault"
-              : "Unlock Vault"}
+              ? `Create ${isTeam ? "Team" : "Personal"} Vault`
+              : `Unlock ${activeProf?.name ?? "Vault"}`}
           </span>
         </button>
 
         <div className="mt-3 text-[10px] text-[var(--text-muted)] font-mono truncate">
-          Vault Path: {status.vaultPath}
+          Folder: {status.vaultPath}
         </div>
       </form>
     </div>

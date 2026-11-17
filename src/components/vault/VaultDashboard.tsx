@@ -17,6 +17,7 @@ import { SyncSettingsPanel } from "./SyncSettingsPanel";
 
 export const VaultDashboard: React.FC = () => {
   const {
+    status,
     activeSection,
     setActiveSection,
     hosts,
@@ -26,6 +27,8 @@ export const VaultDashboard: React.FC = () => {
     knownHosts,
     activeTunnels,
   } = useVaultStore();
+
+  const isTeam = status?.activeProfile?.kind === "team";
 
   const runningTunnelCount = Object.values(activeTunnels).filter(
     (t) => t.status === "running"
@@ -118,14 +121,32 @@ export const VaultDashboard: React.FC = () => {
           })}
         </div>
 
-        {/* Cyberdyne Encryption Telemetry Badge */}
-        <div className="p-3 rounded-xl bg-black/30 border border-[var(--border-subtle)] space-y-1">
-          <div className="flex items-center gap-2 text-[11px] font-semibold text-emerald-400">
-            <span className="w-2 h-2 rounded-full bg-emerald-400" />
-            <span>Vault Encrypted</span>
+        {/* Active Vault Telemetry Badge (Personal vs Team SharePoint) */}
+        <div
+          className={`p-3 rounded-xl border space-y-1 ${
+            isTeam
+              ? "bg-sky-950/35 border-sky-400/40"
+              : "bg-black/30 border-[var(--border-subtle)]"
+          }`}
+        >
+          <div
+            className={`flex items-center gap-2 text-[11px] font-bold ${
+              isTeam ? "text-sky-300" : "text-emerald-400"
+            }`}
+          >
+            <span
+              className={`w-2 h-2 rounded-full ${
+                isTeam ? "bg-sky-400 animate-pulse" : "bg-emerald-400"
+              }`}
+            />
+            <span className="truncate">
+              {isTeam
+                ? `TEAM: ${status?.activeProfile.name}`
+                : status?.activeProfile.name || "Personal Vault"}
+            </span>
           </div>
           <div className="text-[10px] text-[var(--text-muted)] font-mono">
-            Argon2id + XChaCha20
+            Conflict-Free LWW · XChaCha20
           </div>
         </div>
       </aside>

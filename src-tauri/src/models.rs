@@ -114,16 +114,60 @@ pub struct HostKeyPromptEvent {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct VaultProfile {
+    pub id: String,
+    pub name: String,
+    pub kind: String, // "personal" | "team"
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VaultStatus {
     pub initialized: bool,
     pub unlocked: bool,
     pub vault_path: String,
+    pub active_profile: VaultProfile,
+    pub profiles: Vec<VaultProfile>,
+    pub global_hotkey: String,
     pub keyring_available: bool,
     pub keyring_saved: bool,
     pub host_count: usize,
     pub key_count: usize,
     pub tunnel_count: usize,
     pub snippet_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoveredSshKey {
+    pub name: String,
+    pub path: String,
+    pub public_key: Option<String>,
+    pub fingerprint: Option<String>,
+    pub encrypted: bool,
+    pub already_in_vault: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoveredSshHost {
+    pub alias: String,
+    pub hostname: String,
+    pub user: String,
+    pub port: u16,
+    pub identity_file: Option<String>,
+    pub proxy_jump: Option<String>,
+    pub already_in_vault: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshFolderScan {
+    pub ssh_dir: String,
+    pub keys: Vec<DiscoveredSshKey>,
+    pub config_hosts: Vec<DiscoveredSshHost>,
+    pub known_hosts_lines: usize,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

@@ -14,6 +14,7 @@ import {
   ChevronRight,
   KeyRound,
   Zap,
+  Radar,
 } from "lucide-react";
 import type { HostRecord } from "../../types/models";
 import { useVaultStore } from "../../store/useVaultStore";
@@ -29,6 +30,8 @@ export const HostsPanel: React.FC = () => {
     groups,
     hosts,
     keys,
+    sshScan,
+    setActiveSection,
     saveHost,
     saveGroup,
     deleteHost,
@@ -264,6 +267,49 @@ export const HostsPanel: React.FC = () => {
 
       {/* Main Termius Dashboard Canvas */}
       <div className="flex-1 overflow-y-auto p-6 space-y-6">
+        {/* Auto-Sniffed ~/.ssh Discovery Strip */}
+        {sshScan &&
+          (sshScan.keys.some((k) => !k.alreadyInVault) ||
+            sshScan.configHosts.some((h) => !h.alreadyInVault)) && (
+            <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/35 text-xs">
+              <div className="flex items-center gap-2.5 text-amber-200">
+                <Radar className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>
+                  Sniffed <code>~/.ssh</code>:{" "}
+                  <strong>
+                    {sshScan.keys.filter((k) => !k.alreadyInVault).length} unimported key(s)
+                  </strong>{" "}
+                  ({sshScan.keys
+                    .filter((k) => !k.alreadyInVault)
+                    .map((k) => k.name)
+                    .join(", ") || "none"})
+                  {" & "}
+                  <strong>
+                    {sshScan.configHosts.filter((h) => !h.alreadyInVault).length} unimported config host(s)
+                  </strong>
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                {sshScan.keys.some((k) => !k.alreadyInVault) && (
+                  <button
+                    onClick={() => setActiveSection("keychain")}
+                    className="px-2.5 py-1 rounded-md bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 font-semibold transition"
+                  >
+                    Review Keys in Keychain &rarr;
+                  </button>
+                )}
+                {sshScan.configHosts.some((h) => !h.alreadyInVault) && (
+                  <button
+                    onClick={handleImportOpenSshConfig}
+                    className="px-2.5 py-1 rounded-md bg-[var(--accent-primary)] text-white font-semibold transition"
+                  >
+                    Import Hosts Now
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
         {/* Groups Section (when at root) */}
         {!selectedGroupId && groups.length > 0 && (
           <section>

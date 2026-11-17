@@ -100,10 +100,46 @@ export interface HostKeyPromptEvent {
   previousFingerprint?: string | null;
 }
 
+export interface VaultProfile {
+  id: string;
+  name: string;
+  kind: "personal" | "team";
+  path: string;
+}
+
+export interface DiscoveredSshKey {
+  name: string;
+  path: string;
+  publicKey?: string | null;
+  fingerprint?: string | null;
+  encrypted: boolean;
+  alreadyInVault: boolean;
+}
+
+export interface DiscoveredSshHost {
+  alias: string;
+  hostname: string;
+  user: string;
+  port: number;
+  identityFile?: string | null;
+  proxyJump?: string | null;
+  alreadyInVault: boolean;
+}
+
+export interface SshFolderScan {
+  sshDir: string;
+  keys: DiscoveredSshKey[];
+  configHosts: DiscoveredSshHost[];
+  knownHostsLines: number;
+}
+
 export interface VaultStatus {
   initialized: boolean;
   unlocked: boolean;
   vaultPath: string;
+  activeProfile: VaultProfile;
+  profiles: VaultProfile[];
+  globalHotkey: string;
   keyringAvailable: boolean;
   keyringSaved: boolean;
   hostCount: number;
@@ -166,6 +202,8 @@ export interface TerminalPaneConfig {
   kind: "ssh" | "local";
   title: string;
   hostId?: string;
+  vaultKind?: "personal" | "team";
+  vaultName?: string;
   shellProfile?: ShellProfile;
   sessionId?: string;
   connected: boolean;
@@ -200,6 +238,8 @@ export type WorkspaceTab =
       kind: "terminal";
       title: string;
       subtitle?: string;
+      vaultKind?: "personal" | "team";
+      vaultName?: string;
       rootNode: SplitNode;
       activePaneId: string;
       sftpDrawerOpen: boolean;

@@ -9,6 +9,7 @@ import type {
   WorkspaceTab,
 } from "../types/models";
 import { apiPtyWrite, apiSshWrite } from "../lib/ipc";
+import { useVaultStore } from "./useVaultStore";
 
 const uid = () => crypto.randomUUID();
 
@@ -100,9 +101,17 @@ interface WorkspaceState {
   theme: ThemeId;
   setTheme: (theme: ThemeId) => void;
 
+  terminalFontSize: number;
+  adjustFontSize: (delta: number | "reset") => void;
+  copyOnSelect: boolean;
+  setCopyOnSelect: (val: boolean) => void;
+  rightClickPaste: boolean;
+  setRightClickPaste: (val: boolean) => void;
+
   tabs: WorkspaceTab[];
   activeTabId: string;
   setActiveTab: (id: string) => void;
+  cycleTab: (dir: 1 | -1) => void;
   closeTab: (id: string) => void;
 
   shells: ShellProfile[];
@@ -169,9 +178,37 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set({ theme });
   },
 
+  terminalFontSize: Number(localStorage.getItem("skynet_font_size")) || 13.5,
+  adjustFontSize: (delta) => {
+    const next =
+      delta === "reset"
+        ? 13.5
+        : Math.min(24, Math.max(10, get().terminalFontSize + delta));
+    localStorage.setItem("skynet_font_size", String(next));
+    set({ terminalFontSize: next });
+  },
+  copyOnSelect: localStorage.getItem("skynet_copy_on_select") !== "false",
+  setCopyOnSelect: (copyOnSelect) => {
+    localStorage.setItem("skynet_copy_on_select", String(copyOnSelect));
+    set({ copyOnSelect });
+  },
+  rightClickPaste: localStorage.getItem("skynet_right_click_paste") !== "false",
+  setRightClickPaste: (rightClickPaste) => {
+    localStorage.setItem("skynet_right_click_paste", String(rightClickPaste));
+    set({ rightClickPaste });
+  },
+
   tabs: [{ id: "vault", kind: "vault", title: "Vault", pinned: true }],
   activeTabId: "vault",
   setActiveTab: (id) => set({ activeTabId: id }),
+
+  cycleTab: (dir) => {
+    const { tabs, activeTabId } = get();
+    if (tabs.length <= 1) return;
+    const idx = tabs.findIndex((t) => t.id === activeTabId);
+    const nextIdx = (idx + dir + tabs.length) % tabs.length;
+    set({ activeTabId: tabs[nextIdx].id });
+  },
 
   closeTab: (id) => {
     if (id === "vault") return;
@@ -194,6 +231,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   setCommandPaletteOpen: (open) => set({ commandPaletteOpen: open }),
 
   openHostTerminal: (host) => {
+    const activeVault = useVaultStore.getState().status?.activeProfile;
     const paneId = uid();
     const tabId = uid();
     const pane: TerminalPaneConfig = {
@@ -201,6 +239,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       kind: "ssh",
       title: host.label || `${host.username}@${host.address}`,
       hostId: host.id,
+      vaultKind: activeVault?.kind ?? "personal",
+      vaultName: activeVault?.name ?? "Personal Vault",
       connected: false,
       connecting: true,
     };
@@ -209,6 +249,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       kind: "terminal",
       title: host.label || host.address,
       subtitle: `${host.username}@${host.address}`,
+      vaultKind: activeVault?.kind ?? "personal",
+      vaultName: activeVault?.name ?? "Personal Vault",
       rootNode: { type: "leaf", id: uid(), pane },
       activePaneId: paneId,
       sftpDrawerOpen: false,

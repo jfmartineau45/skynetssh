@@ -1,19 +1,25 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{anyhow, Result};
+use russh::keys::{decode_secret_key, HashAlg};
 use serde_json::Value;
 
-use crate::models::{GitSyncStatus, HostRecord};
+use crate::models::{
+    DiscoveredSshHost, DiscoveredSshKey, GitSyncStatus, HostRecord, SshFolderScan,
+};
+use crate::ssh::SshPool;
 use crate::vault::VaultEngine;
 
-#[derive(Default, Debug, PartialEq, Eq)]
+#[derive(Default, Debug, PartialEq, Eq, Clone)]
 pub struct ParsedSshHost {
     pub alias: String,
     pub hostname: String,
     pub user: String,
     pub port: u16,
+    pub identity_file: Option<String>,
+    pub proxy_jump: Option<String>,
 }
 
 pub fn parse_openssh_config_str(content: &str) -> Vec<ParsedSshHost> {
@@ -23,6 +29,8 @@ pub fn parse_openssh_config_str(content: &str) -> Vec<ParsedSshHost> {
         hostname: Option<String>,
         user: Option<String>,
         port: Option<u16>,
+        identity_file: Option<String>,
+        proxy_jump: Option<String>,
     }
 
     let mut drafts: Vec<Draft> = Vec::new();
@@ -35,7 +43,11 @@ pub fn parse_openssh_config_str(content: &str) -> Vec<ParsedSshHost> {
         }
         let mut parts = line.split_whitespace();
         let Some(key) = parts.next() else { continue };
-        let val = parts.collect::<Vec<_>>().join(" ");
+        let val = parts
+            .collect::<Vec<_>>()
+            .join(" ")
+            .trim_matches('"')
+            .to_string();
         if val.is_empty() {
             continue;
         }
@@ -47,7 +59,6 @@ pub fn parse_openssh_config_str(content: &str) -> Vec<ParsedSshHost> {
                         drafts.push(prev);
                     }
                 }
-                // Take the first alias token if multiple aliases are on one Host line
                 let first_alias = val.split_whitespace().next().unwrap_or(&val).to_string();
                 current = Some(Draft {
                     alias: first_alias,
@@ -69,6 +80,16 @@ pub fn parse_openssh_config_str(content: &str) -> Vec<ParsedSshHost> {
                     c.port = val.parse::<u16>().ok();
                 }
             }
+            "identityfile" => {
+                if let Some(c) = current.as_mut() {
+                    c.identity_file = Some(val);
+                }
+            }
+            "proxyjump" => {
+                if let Some(c) = current.as_mut() {
+                    c.proxy_jump = Some(val);
+                }
+            }
             _ => {}
         }
     }
@@ -88,12 +109,157 @@ pub fn parse_openssh_config_str(content: &str) -> Vec<ParsedSshHost> {
                 hostname,
                 user: d.user.unwrap_or_else(|| "root".into()),
                 port: d.port.unwrap_or(22),
+                identity_file: d.identity_file,
+                proxy_jump: d.proxy_jump,
             }
         })
         .collect()
 }
 
-/// Parses `~/.ssh/config` and imports Host blocks into the encrypted Vault.
+fn expand_tilde(raw: &str, home: &Path) -> PathBuf {
+    if let Some(stripped) = raw.strip_prefix("~/").or_else(|| raw.strip_prefix(r"~\")) {
+        home.join(stripped)
+    } else {
+        PathBuf::from(raw)
+    }
+}
+
+/// Non-destructively sniffs `~/.ssh` for private keys (`id_ed25519`, custom keys like `zamboni`, `.pem`),
+/// `~/.ssh/config` hosts, and `known_hosts` entries!
+pub fn sniff_ssh_folder(vault: &VaultEngine) -> Result<SshFolderScan> {
+    let Some(home) = dirs::home_dir() else {
+        return Ok(SshFolderScan::default());
+    };
+    let ssh_dir = home.join(".ssh");
+    if !ssh_dir.exists() {
+        return Ok(SshFolderScan {
+            ssh_dir: ssh_dir.to_string_lossy().to_string(),
+            ..Default::default()
+        });
+    }
+
+    let snap = if vault.is_unlocked() {
+        vault.snapshot().unwrap_or_default()
+    } else {
+        Default::default()
+    };
+
+    let mut discovered_keys = Vec::new();
+    if let Ok(entries) = fs::read_dir(&ssh_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let Some(file_name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            let lower = file_name.to_lowercase();
+            if lower.ends_with(".pub")
+                || lower.ends_with(".old")
+                || lower.ends_with(".bak")
+                || lower.starts_with("known_hosts")
+                || lower.starts_with("authorized_keys")
+                || lower.starts_with("config")
+            {
+                continue;
+            }
+
+            let Ok(meta) = entry.metadata() else { continue };
+            if meta.len() == 0 || meta.len() > 65536 {
+                continue;
+            }
+            let Ok(raw) = fs::read_to_string(&path) else {
+                continue;
+            };
+            if !raw.contains("PRIVATE KEY-----") {
+                continue;
+            }
+
+            let pub_companion = PathBuf::from(format!("{}.pub", path.to_string_lossy()));
+            let mut public_key = fs::read_to_string(&pub_companion)
+                .ok()
+                .map(|s| s.trim().to_string());
+
+            let (encrypted, fingerprint) = match decode_secret_key(&raw, None) {
+                Ok(priv_k) => {
+                    let fp = priv_k.public_key().fingerprint(HashAlg::Sha256).to_string();
+                    if public_key.is_none() {
+                        public_key = priv_k.public_key().to_openssh().ok();
+                    }
+                    (false, Some(fp))
+                }
+                Err(_) => {
+                    let fp = public_key
+                        .as_deref()
+                        .and_then(|pk| ssh_key::PublicKey::from_openssh(pk).ok())
+                        .map(|pk| pk.fingerprint(ssh_key::HashAlg::Sha256).to_string());
+                    (true, fp)
+                }
+            };
+
+            let already_in_vault = snap.keys.iter().any(|k| {
+                fingerprint
+                    .as_deref()
+                    .map(|fp| k.fingerprint == fp)
+                    .unwrap_or(false)
+                    || k.name.eq_ignore_ascii_case(file_name)
+            });
+
+            discovered_keys.push(DiscoveredSshKey {
+                name: file_name.to_string(),
+                path: path.to_string_lossy().to_string(),
+                public_key,
+                fingerprint,
+                encrypted,
+                already_in_vault,
+            });
+        }
+    }
+    discovered_keys.sort_by(|a, b| a.name.cmp(&b.name));
+
+    let config_path = ssh_dir.join("config");
+    let config_hosts = if config_path.exists() {
+        let raw = fs::read_to_string(&config_path).unwrap_or_default();
+        parse_openssh_config_str(&raw)
+            .into_iter()
+            .map(|h| {
+                let already_in_vault = snap
+                    .hosts
+                    .iter()
+                    .any(|vh| vh.label == h.alias || vh.address == h.hostname);
+                DiscoveredSshHost {
+                    alias: h.alias,
+                    hostname: h.hostname,
+                    user: h.user,
+                    port: h.port,
+                    identity_file: h.identity_file,
+                    proxy_jump: h.proxy_jump,
+                    already_in_vault,
+                }
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    let known_hosts_lines = fs::read_to_string(ssh_dir.join("known_hosts"))
+        .map(|s| {
+            s.lines()
+                .filter(|l| !l.trim().is_empty() && !l.trim().starts_with('#'))
+                .count()
+        })
+        .unwrap_or(0);
+
+    Ok(SshFolderScan {
+        ssh_dir: ssh_dir.to_string_lossy().to_string(),
+        keys: discovered_keys,
+        config_hosts,
+        known_hosts_lines,
+    })
+}
+
+/// Parses `~/.ssh/config` and imports Host blocks (plus referenced unencrypted `IdentityFile` keys) into the Vault.
 pub fn import_openssh_config(vault: &VaultEngine) -> Result<usize> {
     let home = dirs::home_dir().ok_or_else(|| anyhow!("Could not locate user home directory"))?;
     let ssh_config_path = home.join(".ssh").join("config");
@@ -102,7 +268,9 @@ pub fn import_openssh_config(vault: &VaultEngine) -> Result<usize> {
     }
 
     let content = fs::read_to_string(&ssh_config_path)?;
-    let existing = vault.snapshot()?.hosts;
+    let snap = vault.snapshot()?;
+    let existing = snap.hosts;
+    let mut keys = snap.keys;
     let parsed = parse_openssh_config_str(&content);
 
     let mut imported = 0usize;
@@ -115,15 +283,44 @@ pub fn import_openssh_config(vault: &VaultEngine) -> Result<usize> {
         {
             continue;
         }
+
+        let mut linked_key_id = None;
+        if let Some(ref id_file) = d.identity_file {
+            let key_path = expand_tilde(id_file, &home);
+            if key_path.exists() {
+                if let Ok(pem) = fs::read_to_string(&key_path) {
+                    let key_name = key_path
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("ssh-config-key");
+                    if let Ok(imported_key) = SshPool::import_key_from_pem(key_name, &pem, None) {
+                        if let Some(existing_k) = keys
+                            .iter()
+                            .find(|k| k.fingerprint == imported_key.fingerprint)
+                        {
+                            linked_key_id = Some(existing_k.id.clone());
+                        } else if vault.save_key(&imported_key).is_ok() {
+                            linked_key_id = Some(imported_key.id.clone());
+                            keys.push(imported_key);
+                        }
+                    }
+                }
+            }
+        }
+
         let rec = HostRecord {
             id: uuid::Uuid::new_v4().to_string(),
             label: d.alias,
             address: d.hostname,
             port: d.port,
             username: d.user,
-            auth_method: "agent".into(),
+            auth_method: if linked_key_id.is_some() {
+                "key".into()
+            } else {
+                "agent".into()
+            },
             password: None,
-            key_id: None,
+            key_id: linked_key_id,
             group_id: None,
             tags: vec!["ssh-config".into()],
             jump_host_id: None,
@@ -309,7 +506,6 @@ mod tests {
     #[test]
     fn test_parse_openssh_config() {
         let sample = r#"
-            # Wildcard ignored
             Host *
                 ServerAliveInterval 30
 
@@ -317,6 +513,8 @@ mod tests {
                 HostName 10.0.1.42
                 User ubuntu
                 Port 2222
+                IdentityFile ~/.ssh/zamboni
+                ProxyJump bastion
 
             Host homelab
                 User miles
@@ -330,6 +528,8 @@ mod tests {
                 hostname: "10.0.1.42".into(),
                 user: "ubuntu".into(),
                 port: 2222,
+                identity_file: Some("~/.ssh/zamboni".into()),
+                proxy_jump: Some("bastion".into()),
             }
         );
         assert_eq!(hosts[1].hostname, "homelab");
