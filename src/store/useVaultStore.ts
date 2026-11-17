@@ -49,6 +49,8 @@ interface VaultState {
   loading: boolean;
   activeSection: VaultSection;
   setActiveSection: (section: VaultSection) => void;
+  newHostDrawerRequested: boolean;
+  setNewHostDrawerRequested: (open: boolean) => void;
 
   groups: GroupRecord[];
   hosts: HostRecord[];
@@ -121,6 +123,9 @@ export const useVaultStore = create<VaultState>((set, get) => ({
   loading: true,
   activeSection: "hosts",
   setActiveSection: (activeSection) => set({ activeSection }),
+  newHostDrawerRequested: false,
+  setNewHostDrawerRequested: (newHostDrawerRequested) =>
+    set({ newHostDrawerRequested }),
 
   groups: [],
   hosts: [],

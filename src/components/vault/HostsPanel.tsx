@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Server,
   Folder,
@@ -34,6 +34,8 @@ export const HostsPanel: React.FC = () => {
     deleteHost,
     deleteGroup,
     reloadSnapshot,
+    newHostDrawerRequested,
+    setNewHostDrawerRequested,
   } = useVaultStore();
   const { openHostTerminal, openDualSftpTab } = useWorkspaceStore();
 
@@ -44,6 +46,14 @@ export const HostsPanel: React.FC = () => {
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingHost, setEditingHost] = useState<HostRecord | null>(null);
+
+  useEffect(() => {
+    if (newHostDrawerRequested) {
+      setEditingHost(null);
+      setDrawerOpen(true);
+      setNewHostDrawerRequested(false);
+    }
+  }, [newHostDrawerRequested, setNewHostDrawerRequested]);
 
   const [newGroupModal, setNewGroupModal] = useState(false);
   const [newGroupName, setNewGroupName] = useState("");

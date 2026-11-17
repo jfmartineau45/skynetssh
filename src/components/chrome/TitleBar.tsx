@@ -12,11 +12,13 @@ import {
   X,
   ChevronDown,
   Server,
+  Zap,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useWorkspaceStore } from "../../store/useWorkspaceStore";
 import { useVaultStore } from "../../store/useVaultStore";
 import { isTauriRuntime } from "../../lib/ipc";
+import { parseSshConnectionString } from "../../lib/sshParser";
 
 export const TitleBar: React.FC = () => {
   const {
@@ -25,6 +27,7 @@ export const TitleBar: React.FC = () => {
     setActiveTab,
     closeTab,
     shells,
+    openHostTerminal,
     openLocalTerminal,
     openDualSftpTab,
     setCommandPaletteOpen,
@@ -33,8 +36,18 @@ export const TitleBar: React.FC = () => {
     toggleBroadcastMode,
   } = useWorkspaceStore();
 
-  const { status, lockVault } = useVaultStore();
+  const {
+    status,
+    hosts,
+    keys,
+    saveHost,
+    lockVault,
+    setActiveSection,
+    setNewHostDrawerRequested,
+  } = useVaultStore();
+
   const [shellMenuOpen, setShellMenuOpen] = useState(false);
+  const [menuQuery, setMenuQuery] = useState("");
   const [menuPos, setMenuPos] = useState<{ top: number; left: number }>({
     top: 40,
     left: 160,
@@ -60,6 +73,54 @@ export const TitleBar: React.FC = () => {
   };
   const handleClose = () => {
     if (isTauriRuntime()) getCurrentWindow().close();
+  };
+
+  const q = menuQuery.trim().toLowerCase();
+  const filteredHosts = hosts.filter(
+    (h) =>
+      !q ||
+      h.label.toLowerCase().includes(q) ||
+      h.address.toLowerCase().includes(q) ||
+      h.username.toLowerCase().includes(q)
+  );
+  const filteredShells = shells.filter(
+    (s) => !q || s.name.toLowerCase().includes(q)
+  );
+
+  const looksLikeSshTarget =
+    menuQuery.includes("@") ||
+    menuQuery.trim().startsWith("ssh ") ||
+    (menuQuery.includes(".") && !menuQuery.includes(" "));
+  const parsedQuickSsh = looksLikeSshTarget
+    ? parseSshConnectionString(menuQuery)
+    : null;
+
+  const handleQuickSshConnectAndSave = async () => {
+    if (!parsedQuickSsh?.address) return;
+    const saved = await saveHost({
+      id: crypto.randomUUID(),
+      label: parsedQuickSsh.address,
+      address: parsedQuickSsh.address,
+      port: parsedQuickSsh.port ?? 22,
+      username: parsedQuickSsh.username ?? "root",
+      authMethod: keys.length > 0 ? "key" : "password",
+      keyId: keys[0]?.id ?? null,
+      groupId: null,
+      tags: [],
+      keepaliveIntervalSecs: 30,
+      updatedAt: Date.now(),
+    });
+    setShellMenuOpen(false);
+    setMenuQuery("");
+    openHostTerminal(saved);
+  };
+
+  const handleOpenNewHostDrawer = () => {
+    setShellMenuOpen(false);
+    setMenuQuery("");
+    setActiveSection("hosts");
+    setActiveTab("vault");
+    setNewHostDrawerRequested(true);
   };
 
   return (
@@ -136,7 +197,7 @@ export const TitleBar: React.FC = () => {
             );
           })}
 
-          {/* Quick + New Shell / SFTP Button */}
+          {/* Quick + New SSH / Vault Host / Local Shell / SFTP Button */}
           <div className="shrink-0" ref={menuRef}>
             <button
               ref={btnRef}
@@ -145,13 +206,14 @@ export const TitleBar: React.FC = () => {
                   const r = btnRef.current.getBoundingClientRect();
                   setMenuPos({
                     top: r.bottom + 4,
-                    left: Math.min(r.left, window.innerWidth - 232),
+                    left: Math.min(r.left, window.innerWidth - 296),
                   });
+                  setMenuQuery("");
                 }
                 setShellMenuOpen((v) => !v);
               }}
               className="flex items-center gap-0.5 h-7 px-2 rounded-md text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition"
-              title="Open Local Shell or Dual-Pane SFTP"
+              title="Connect SSH, Add Host to Vault, Local Shell, or SFTP"
             >
               <Plus className="w-3.5 h-3.5" />
               <ChevronDown className="w-3 h-3 opacity-70" />
@@ -160,41 +222,120 @@ export const TitleBar: React.FC = () => {
             {shellMenuOpen && (
               <div
                 style={{ top: menuPos.top, left: menuPos.left }}
-                className="fixed w-56 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-accent)] shadow-2xl py-1.5 z-50"
+                className="fixed w-72 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-accent)] shadow-2xl py-2 z-50"
               >
-                <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-                  Local Terminals
-                </div>
-                {shells.length === 0 ? (
-                  <div className="px-3 py-2 text-xs text-[var(--text-muted)]">
-                    Discovering shells...
-                  </div>
-                ) : (
-                  shells.map((sh) => (
-                    <button
-                      key={sh.id}
-                      onClick={() => {
-                        openLocalTerminal(sh);
+                {/* Search / Quick SSH user@host Input */}
+                <div className="px-2.5 pb-2 border-b border-[var(--border-subtle)] space-y-1.5">
+                  <input
+                    autoFocus
+                    value={menuQuery}
+                    onChange={(e) => setMenuQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") {
                         setShellMenuOpen(false);
-                      }}
-                      className="w-full flex items-center gap-2.5 px-3 py-1.5 text-xs text-left text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition"
+                      } else if (e.key === "Enter") {
+                        if (filteredHosts.length === 1 && !looksLikeSshTarget) {
+                          openHostTerminal(filteredHosts[0]);
+                          setShellMenuOpen(false);
+                        } else if (parsedQuickSsh?.address) {
+                          handleQuickSshConnectAndSave();
+                        }
+                      }
+                    }}
+                    placeholder="Filter or type user@host -p 22..."
+                    className="w-full px-2.5 py-1.5 rounded-lg bg-black/40 border border-[var(--border-subtle)] focus:border-[var(--border-accent)] text-xs text-white placeholder-[var(--text-muted)] focus:outline-none"
+                  />
+
+                  {parsedQuickSsh?.address && (
+                    <button
+                      onClick={handleQuickSshConnectAndSave}
+                      className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-primary-hover)] text-white text-xs font-semibold transition"
                     >
-                      <Terminal className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                      <span className="truncate">{sh.name}</span>
+                      <Zap className="w-3.5 h-3.5 shrink-0" />
+                      <span className="truncate">
+                        Connect & Save{" "}
+                        {parsedQuickSsh.username ?? "root"}@
+                        {parsedQuickSsh.address}
+                      </span>
                     </button>
-                  ))
-                )}
-                <div className="my-1 border-t border-[var(--border-subtle)]" />
-                <button
-                  onClick={() => {
-                    openDualSftpTab();
-                    setShellMenuOpen(false);
-                  }}
-                  className="w-full flex items-center gap-2.5 px-3 py-1.5 text-xs text-left text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition"
-                >
-                  <FolderSync className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                  <span>Open Dual-Pane SFTP</span>
-                </button>
+                  )}
+
+                  <button
+                    onClick={handleOpenNewHostDrawer}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs font-medium text-[var(--text-primary)] transition"
+                  >
+                    <Plus className="w-3.5 h-3.5 text-[var(--accent-primary)] shrink-0" />
+                    <span>New Host in Vault...</span>
+                  </button>
+                </div>
+
+                <div className="max-h-72 overflow-y-auto py-1">
+                  {/* Saved SSH Hosts */}
+                  {filteredHosts.length > 0 && (
+                    <>
+                      <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                        Saved SSH Hosts ({filteredHosts.length})
+                      </div>
+                      {filteredHosts.map((h) => (
+                        <button
+                          key={h.id}
+                          onClick={() => {
+                            openHostTerminal(h);
+                            setShellMenuOpen(false);
+                          }}
+                          className="w-full flex items-center justify-between gap-2 px-3 py-1.5 text-xs text-left text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition"
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <Server className="w-3.5 h-3.5 text-[var(--accent-primary)] shrink-0" />
+                            <span className="truncate font-medium">
+                              {h.label}
+                            </span>
+                          </div>
+                          <span className="text-[10px] font-mono text-[var(--text-muted)] shrink-0">
+                            {h.username}@{h.address}
+                          </span>
+                        </button>
+                      ))}
+                      <div className="my-1 border-t border-[var(--border-subtle)]" />
+                    </>
+                  )}
+
+                  {/* Local Terminals */}
+                  <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                    Local Terminals
+                  </div>
+                  {filteredShells.length === 0 ? (
+                    <div className="px-3 py-1.5 text-xs text-[var(--text-muted)]">
+                      No matching local shells
+                    </div>
+                  ) : (
+                    filteredShells.map((sh) => (
+                      <button
+                        key={sh.id}
+                        onClick={() => {
+                          openLocalTerminal(sh);
+                          setShellMenuOpen(false);
+                        }}
+                        className="w-full flex items-center gap-2.5 px-3 py-1.5 text-xs text-left text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition"
+                      >
+                        <Terminal className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                        <span className="truncate">{sh.name}</span>
+                      </button>
+                    ))
+                  )}
+
+                  <div className="my-1 border-t border-[var(--border-subtle)]" />
+                  <button
+                    onClick={() => {
+                      openDualSftpTab();
+                      setShellMenuOpen(false);
+                    }}
+                    className="w-full flex items-center gap-2.5 px-3 py-1.5 text-xs text-left text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition"
+                  >
+                    <FolderSync className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                    <span>Open Dual-Pane SFTP</span>
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -203,7 +344,6 @@ export const TitleBar: React.FC = () => {
 
       {/* Right: Broadcast Toggle, Ctrl+K Launcher, Vault Lock & Window Controls */}
       <div className="flex items-center h-full shrink-0 gap-1.5 pr-1">
-        {/* Multi-Host Broadcast Toggle */}
         <button
           onClick={toggleBroadcastMode}
           className={`flex items-center gap-1.5 h-6 px-2.5 rounded text-[11px] font-medium transition ${
@@ -221,7 +361,6 @@ export const TitleBar: React.FC = () => {
           </span>
         </button>
 
-        {/* Command Palette Trigger */}
         <button
           onClick={() => setCommandPaletteOpen(true)}
           className="flex items-center gap-2 h-6 px-2.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] hover:border-[var(--border-accent)] text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition"
@@ -234,7 +373,6 @@ export const TitleBar: React.FC = () => {
           </kbd>
         </button>
 
-        {/* Lock Vault Button */}
         {status?.unlocked && (
           <button
             onClick={() => lockVault()}
@@ -245,7 +383,6 @@ export const TitleBar: React.FC = () => {
           </button>
         )}
 
-        {/* Native Window Controls */}
         <div className="flex items-center h-full ml-1 border-l border-[var(--border-subtle)]">
           <button
             onClick={handleMinimize}
