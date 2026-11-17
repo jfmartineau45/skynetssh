@@ -1,0 +1,134 @@
+@import "tailwindcss";
+@import "@xterm/xterm/css/xterm.css";
+
+:root,
+[data-theme="skynet-obsidian"] {
+  --bg-app: rgba(9, 10, 14, 0.92);
+  --bg-panel: rgba(15, 17, 23, 0.95);
+  --bg-elevated: rgba(22, 25, 34, 0.98);
+  --bg-hover: rgba(34, 39, 52, 0.75);
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-accent: rgba(239, 68, 68, 0.45);
+  --accent-primary: #ef4444;
+  --accent-primary-hover: #dc2626;
+  --accent-glow: rgba(239, 68, 68, 0.22);
+  --text-primary: #f4f4f6;
+  --text-secondary: #9ca3af;
+  --text-muted: #6b7280;
+  --term-bg: #0b0d12;
+}
+
+[data-theme="tabby-dark"] {
+  --bg-app: rgba(17, 20, 27, 0.90);
+  --bg-panel: rgba(23, 27, 36, 0.95);
+  --bg-elevated: rgba(30, 35, 48, 0.98);
+  --bg-hover: rgba(45, 53, 72, 0.75);
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-accent: rgba(56, 189, 248, 0.45);
+  --accent-primary: #38bdf8;
+  --accent-primary-hover: #0ea5e9;
+  --accent-glow: rgba(56, 189, 248, 0.20);
+  --text-primary: #f1f5f9;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --term-bg: #11141b;
+}
+
+[data-theme="termius-dark"] {
+  --bg-app: rgba(18, 21, 30, 0.94);
+  --bg-panel: rgba(24, 28, 39, 0.97);
+  --bg-elevated: rgba(32, 37, 52, 0.98);
+  --bg-hover: rgba(44, 51, 70, 0.75);
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-accent: rgba(16, 185, 129, 0.45);
+  --accent-primary: #10b981;
+  --accent-primary-hover: #059669;
+  --accent-glow: rgba(16, 185, 129, 0.20);
+  --text-primary: #f3f4f6;
+  --text-secondary: #9ca3af;
+  --text-muted: #6b7280;
+  --term-bg: #10131c;
+}
+
+[data-theme="tokyo-night"] {
+  --bg-app: rgba(22, 22, 30, 0.93);
+  --bg-panel: rgba(26, 27, 38, 0.96);
+  --bg-elevated: rgba(36, 40, 59, 0.98);
+  --bg-hover: rgba(47, 53, 77, 0.75);
+  --border-subtle: rgba(169, 177, 214, 0.10);
+  --border-accent: rgba(122, 162, 247, 0.45);
+  --accent-primary: #7aa2f7;
+  --accent-primary-hover: #5d8ef4;
+  --accent-glow: rgba(122, 162, 247, 0.20);
+  --text-primary: #c0caf5;
+  --text-secondary: #9aa5ce;
+  --text-muted: #565f89;
+  --term-bg: #16161e;
+}
+
+[data-theme="t800-hud"] {
+  --bg-app: rgba(12, 4, 6, 0.94);
+  --bg-panel: rgba(20, 6, 9, 0.96);
+  --bg-elevated: rgba(31, 9, 13, 0.98);
+  --bg-hover: rgba(54, 14, 20, 0.75);
+  --border-subtle: rgba(248, 113, 113, 0.18);
+  --border-accent: rgba(239, 68, 68, 0.75);
+  --accent-primary: #ff2a2a;
+  --accent-primary-hover: #dc2626;
+  --accent-glow: rgba(255, 42, 42, 0.30);
+  --text-primary: #ffe4e6;
+  --text-secondary: #fca5a5;
+  --text-muted: #991b1b;
+  --term-bg: #090203;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: "Inter", "Segoe UI Variable Display", "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+
+/* Custom subtle Cyberdyne scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-primary);
+}
+
+/* Ensure xterm fills pane cleanly */
+.xterm {
+  height: 100%;
+  padding: 6px 8px;
+}
+
+.xterm-viewport {
+  overflow-y: auto !important;
+}
+
+/* Subtle scanline accent option for Cyberdyne header */
+.cyberdyne-grid {
+  background-image: radial-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 20px 20px;
+}

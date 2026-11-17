@@ -1,0 +1,192 @@
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupRecord {
+    pub id: String,
+    pub name: String,
+    pub icon: String,
+    pub color: String,
+    pub parent_id: Option<String>,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostRecord {
+    pub id: String,
+    pub label: String,
+    pub address: String,
+    pub port: u16,
+    pub username: String,
+    pub auth_method: String, // "password" | "key" | "agent"
+    pub password: Option<String>,
+    pub key_id: Option<String>,
+    pub group_id: Option<String>,
+    pub tags: Vec<String>,
+    pub jump_host_id: Option<String>,
+    pub startup_snippet_id: Option<String>,
+    pub startup_command: Option<String>,
+    #[serde(default = "default_keepalive")]
+    pub keepalive_interval_secs: u64,
+    pub notes: Option<String>,
+    pub last_connected_at: Option<i64>,
+    pub updated_at: i64,
+}
+
+fn default_keepalive() -> u64 {
+    30
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshKeyRecord {
+    pub id: String,
+    pub name: String,
+    pub algorithm: String,
+    pub public_key: String,
+    pub private_key_pem: String,
+    pub passphrase: Option<String>,
+    pub fingerprint: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TunnelRecord {
+    pub id: String,
+    pub name: String,
+    pub host_id: String,
+    pub tunnel_type: String, // "local" | "remote" | "dynamic"
+    pub bind_address: String,
+    pub bind_port: u16,
+    pub target_host: Option<String>,
+    pub target_port: Option<u16>,
+    pub auto_start: bool,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActiveTunnelRuntime {
+    pub tunnel_id: String,
+    pub status: String,
+    pub active_connections: usize,
+    pub bytes_in: u64,
+    pub bytes_out: u64,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SnippetRecord {
+    pub id: String,
+    pub name: String,
+    pub command: String,
+    pub description: Option<String>,
+    pub tags: Vec<String>,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnownHostRecord {
+    pub id: String,
+    pub host_port: String,
+    pub key_type: String,
+    pub fingerprint_sha256: String,
+    pub public_key_base64: String,
+    pub first_seen_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostKeyPromptEvent {
+    pub request_id: String,
+    pub host_port: String,
+    pub key_type: String,
+    pub fingerprint_sha256: String,
+    pub status: String, // "unknown" | "changed"
+    pub previous_fingerprint: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultStatus {
+    pub initialized: bool,
+    pub unlocked: bool,
+    pub vault_path: String,
+    pub keyring_available: bool,
+    pub keyring_saved: bool,
+    pub host_count: usize,
+    pub key_count: usize,
+    pub tunnel_count: usize,
+    pub snippet_count: usize,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultSnapshot {
+    pub groups: Vec<GroupRecord>,
+    pub hosts: Vec<HostRecord>,
+    pub keys: Vec<SshKeyRecord>,
+    pub tunnels: Vec<TunnelRecord>,
+    pub snippets: Vec<SnippetRecord>,
+    pub known_hosts: Vec<KnownHostRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShellProfile {
+    pub id: String,
+    pub name: String,
+    pub executable: String,
+    pub args: Vec<String>,
+    pub icon: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SftpEntry {
+    pub name: String,
+    pub path: String,
+    pub is_dir: bool,
+    pub is_symlink: bool,
+    pub size: u64,
+    pub modified_at: Option<i64>,
+    pub permissions: Option<u32>,
+    pub permissions_display: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DirectoryListing {
+    pub path: String,
+    pub entries: Vec<SftpEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferProgressEvent {
+    pub transfer_id: String,
+    pub file_name: String,
+    pub direction: String,
+    pub bytes_transferred: u64,
+    pub total_bytes: u64,
+    pub status: String,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitSyncStatus {
+    pub is_git_repo: bool,
+    pub branch: Option<String>,
+    pub remote_url: Option<String>,
+    pub changed_files: usize,
+    pub ahead: usize,
+    pub behind: usize,
+    pub last_sync_message: Option<String>,
+}

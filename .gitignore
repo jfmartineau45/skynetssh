@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+
+# Frontend build output
+dist/
+dist-ssr/
+
+# Rust / Tauri build artifacts & generated schemas
+src-tauri/target/
+src-tauri/gen/
+src-tauri/.cargo/
+src-tauri/WixTools/
+
+# Local helper scripts & OS/editor files
+dev.bat
+build-release.bat
+launch-skynet.bat
+.DS_Store
+Thumbs.db
+*.log
+*.swp

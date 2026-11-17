@@ -1,0 +1,43 @@
+{
+  "name": "skynet-ssh",
+  "private": true,
+  "version": "0.1.0",
+  "description": "SkynetSSH — Native Tauri v2 SSH, SFTP, Tunnel & Multi-Pane Terminal Client",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "test": "node --experimental-strip-types --test src/lib/sshParser.test.ts",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.2.0",
+    "@tauri-apps/plugin-dialog": "^2.2.0",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-search": "^0.15.0",
+    "@xterm/addon-web-links": "^0.11.0",
+    "@xterm/addon-webgl": "^0.18.0",
+    "@xterm/xterm": "^5.5.0",
+    "lucide-react": "^0.475.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "zustand": "^5.0.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.6",
+    "@tauri-apps/cli": "^2.2.0",
+    "@types/react": "^19.0.8",
+    "@types/react-dom": "^19.0.3",
+    "@vitejs/plugin-react": "^4.3.4",
+    "tailwindcss": "^4.0.6",
+    "typescript": "^5.7.3",
+    "vite": "^6.1.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "@tauri-apps/cli"
+    ]
+  }
+}
