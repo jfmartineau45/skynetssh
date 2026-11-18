@@ -19,9 +19,9 @@ use tauri_plugin_global_shortcut::{
 };
 
 use crate::models::{
-    ActiveTunnelRuntime, DirectoryListing, GitSyncStatus, GroupRecord, HostRecord, ShellProfile,
-    SnippetRecord, SshFolderScan, SshKeyRecord, TotpSetupPayload, TransferProgressEvent,
-    TunnelRecord, VaultSnapshot, VaultStatus,
+    ActiveTunnelRuntime, DirectoryListing, GitSyncStatus, GroupRecord, HostProbeResult, HostRecord,
+    ShellProfile, SnippetRecord, SshFolderScan, SshKeyRecord, TotpSetupPayload,
+    TransferProgressEvent, TunnelRecord, VaultSnapshot, VaultStatus,
 };
 use crate::pty::PtyManager;
 use crate::ssh::SshPool;
@@ -543,6 +543,32 @@ async fn ssh_respond_host_key(
     Ok(())
 }
 
+#[tauri::command]
+async fn ssh_probe_host(host_id: String, state: State<'_, AppState>) -> CmdResult<HostProbeResult> {
+    let (host, group_name) = {
+        let guard = state.vault.lock().map_err(err_str)?;
+        let h = guard.get_host(&host_id).map_err(err_str)?;
+        let g_name = if let Some(gid) = &h.group_id {
+            guard
+                .snapshot()
+                .ok()
+                .and_then(|s| s.groups.into_iter().find(|g| &g.id == gid).map(|g| g.name))
+        } else {
+            None
+        };
+        (h, g_name)
+    };
+
+    Ok(ssh::probe_host_reachability(
+        host.id,
+        host.address,
+        host.port,
+        host.label,
+        group_name,
+    )
+    .await)
+}
+
 /* ─── SFTP Commands ─── */
 #[tauri::command]
 fn sftp_local_list(path: Option<String>) -> CmdResult<DirectoryListing> {
@@ -851,6 +877,7 @@ pub fn run() {
             ssh_resize,
             ssh_close_shell,
             ssh_respond_host_key,
+            ssh_probe_host,
             sftp_local_list,
             sftp_local_mkdir,
             sftp_local_delete,

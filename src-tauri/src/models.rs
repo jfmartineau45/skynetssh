@@ -40,6 +40,17 @@ fn default_keepalive() -> u64 {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct HostProbeResult {
+    pub host_id: String,
+    pub online: bool,
+    pub latency_ms: Option<u64>,
+    pub passed_probes: u8,
+    pub total_probes: u8,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SshKeyRecord {
     pub id: String,
     pub name: String,

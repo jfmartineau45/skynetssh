@@ -15,7 +15,9 @@ use tauri::{AppHandle, Emitter};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot, Mutex};
 
-use crate::models::{HostKeyPromptEvent, HostRecord, KnownHostRecord, SshKeyRecord};
+use crate::models::{
+    HostKeyPromptEvent, HostProbeResult, HostRecord, KnownHostRecord, SshKeyRecord,
+};
 use crate::vault::VaultEngine;
 
 #[derive(Clone)]
@@ -651,6 +653,180 @@ impl SshPool {
     }
 }
 
+pub fn is_safe_probe_host(addr: &str) -> bool {
+    let trimmed = addr.trim();
+    !trimmed.is_empty()
+        && trimmed.len() <= 253
+        && !trimmed.starts_with('-')
+        && trimmed
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | ':' | '-' | '_'))
+}
+
+pub fn requires_multi_ping_warmup(address: &str, label: &str, group_name: Option<&str>) -> bool {
+    address.trim().starts_with("198.")
+        || label.to_ascii_lowercase().contains("secorall")
+        || group_name
+            .unwrap_or("")
+            .to_ascii_lowercase()
+            .contains("secorall")
+}
+
+async fn tcp_port_probe(address: &str, port: u16, timeout_ms: u64) -> Option<u64> {
+    let start = std::time::Instant::now();
+    let target = if address.contains(':') && !address.starts_with('[') {
+        format!("[{address}]:{port}")
+    } else {
+        format!("{address}:{port}")
+    };
+    match tokio::time::timeout(Duration::from_millis(timeout_ms), TcpStream::connect(target)).await
+    {
+        Ok(Ok(_stream)) => Some(start.elapsed().as_millis() as u64),
+        _ => None,
+    }
+}
+
+async fn icmp_ping_once(address: &str, timeout_ms: u64) -> Option<u64> {
+    if !is_safe_probe_host(address) {
+        return None;
+    }
+    let start = std::time::Instant::now();
+    let mut cmd = tokio::process::Command::new("ping");
+    #[cfg(target_os = "windows")]
+    {
+        // CREATE_NO_WINDOW prevents any console flash
+        cmd.creation_flags(0x0800_0000);
+        cmd.args(["-n", "1", "-w", &timeout_ms.to_string(), address]);
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        cmd.args(["-c", "1", "-W", "1", address]);
+    }
+
+    let out = tokio::time::timeout(Duration::from_millis(timeout_ms + 300), cmd.output())
+        .await
+        .ok()?
+        .ok()?;
+
+    if !out.status.success() {
+        return None;
+    }
+    let stdout_lower = String::from_utf8_lossy(&out.stdout).to_ascii_lowercase();
+    // Locale-safe check (English & French Windows): real IPv4 replies always include `TTL=`,
+    // whereas gateway "Destination host unreachable" / "Impossible de joindre" does not!
+    let valid_reply =
+        stdout_lower.contains("ttl=") || (address.contains(':') && stdout_lower.contains("ms"));
+    if valid_reply {
+        Some(start.elapsed().as_millis() as u64)
+    } else {
+        None
+    }
+}
+
+async fn single_reachability_probe(address: &str, port: u16, timeout_ms: u64) -> Option<u64> {
+    let addr_tcp = address.to_string();
+    let addr_icmp = address.to_string();
+
+    let mut tcp_task =
+        tokio::spawn(async move { tcp_port_probe(&addr_tcp, port, timeout_ms).await });
+    let mut icmp_task =
+        tokio::spawn(async move { icmp_ping_once(&addr_icmp, timeout_ms).await });
+
+    tokio::select! {
+        tcp_res = &mut tcp_task => {
+            if let Ok(Some(ms)) = tcp_res {
+                icmp_task.abort();
+                return Some(ms);
+            }
+            icmp_task.await.ok().flatten()
+        }
+        icmp_res = &mut icmp_task => {
+            if let Ok(Some(ms)) = icmp_res {
+                tcp_task.abort();
+                return Some(ms);
+            }
+            tcp_task.await.ok().flatten()
+        }
+    }
+}
+
+pub async fn probe_host_reachability(
+    host_id: String,
+    address: String,
+    port: u16,
+    label: String,
+    group_name: Option<String>,
+) -> HostProbeResult {
+    let clean_addr = address.trim().trim_matches(|c| c == '[' || c == ']').to_string();
+    if !is_safe_probe_host(&clean_addr) {
+        return HostProbeResult {
+            host_id,
+            online: false,
+            latency_ms: None,
+            passed_probes: 0,
+            total_probes: 0,
+            detail: "Invalid host address".into(),
+        };
+    }
+
+    let multi_ping = requires_multi_ping_warmup(&clean_addr, &label, group_name.as_deref());
+
+    if multi_ping {
+        // Secorall / 198.xx VPN & tunnel targets: run 3 sequential probes so cold routes/ARP wake up
+        // on ping 1-2 and confirm reachability across 3 probes.
+        let mut passed = 0u8;
+        let mut last_ms: Option<u64> = None;
+        for attempt in 1..=3u8 {
+            if let Some(ms) = single_reachability_probe(&clean_addr, port, 1100).await {
+                passed += 1;
+                last_ms = Some(ms);
+            }
+            if attempt < 3 {
+                tokio::time::sleep(Duration::from_millis(180)).await;
+            }
+        }
+        let online = passed > 0;
+        let detail = match (online, last_ms) {
+            (true, Some(ms)) => format!("Online ({passed}/3) · {ms}ms"),
+            (true, None) => format!("Online ({passed}/3)"),
+            (false, _) => "Offline (0/3)".into(),
+        };
+        HostProbeResult {
+            host_id,
+            online,
+            latency_ms: last_ms,
+            passed_probes: passed,
+            total_probes: 3,
+            detail,
+        }
+    } else {
+        // Standard hosts: return immediately on first success, retrying up to 3 times before marking Offline
+        for attempt in 1..=3u8 {
+            if let Some(ms) = single_reachability_probe(&clean_addr, port, 950).await {
+                return HostProbeResult {
+                    host_id,
+                    online: true,
+                    latency_ms: Some(ms),
+                    passed_probes: 1,
+                    total_probes: attempt,
+                    detail: format!("Online · {ms}ms"),
+                };
+            }
+            if attempt < 3 {
+                tokio::time::sleep(Duration::from_millis(150)).await;
+            }
+        }
+        HostProbeResult {
+            host_id,
+            online: false,
+            latency_ms: None,
+            passed_probes: 0,
+            total_probes: 3,
+            detail: "Offline".into(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -670,5 +846,17 @@ mod tests {
         )
         .unwrap();
         assert_eq!(reimported.fingerprint, generated.fingerprint);
+    }
+
+    #[test]
+    fn test_probe_validation_and_secorall_198_detection() {
+        assert!(is_safe_probe_host("198.51.100.42"));
+        assert!(is_safe_probe_host("2001:db8::1"));
+        assert!(!is_safe_probe_host("-t 198.51.100.1"));
+        assert!(!is_safe_probe_host("bad host;rm"));
+
+        assert!(requires_multi_ping_warmup("198.18.0.15", "App VM", None));
+        assert!(requires_multi_ping_warmup("10.20.1.5", "Prod DB", Some("Client - Secorall")));
+        assert!(!requires_multi_ping_warmup("192.168.45.205", "Paperless", Some("Homelab")));
     }
 }

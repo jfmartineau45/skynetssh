@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Server,
   Folder,
@@ -33,7 +33,7 @@ import {
   HostEditorDrawer,
   parseSshConnectionString,
 } from "./HostEditorDrawer";
-import { apiImportSshConfig } from "../../lib/ipc";
+import { apiImportSshConfig, apiProbeHost, isTauriRuntime } from "../../lib/ipc";
 
 const TENANT_COLORS = [
   { hex: "#38bdf8", label: "Sky" },
@@ -89,6 +89,125 @@ export const HostsPanel: React.FC = () => {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkTagInput, setBulkTagInput] = useState("");
   const [bulkTagOpen, setBulkTagOpen] = useState(false);
+
+  /* Hover-Only Online / Offline Reachability State */
+  const [probeMap, setProbeMap] = useState<
+    Record<
+      string,
+      {
+        state: "probing" | "online" | "offline";
+        detail: string;
+        checkedAt: number;
+      }
+    >
+  >({});
+  const hoverTimersRef = useRef<Record<string, number>>({});
+
+  const runProbeForHost = async (h: HostRecord, force = false) => {
+    const existing = probeMap[h.id];
+    if (!force && existing) {
+      if (existing.state === "probing") return;
+      if (Date.now() - existing.checkedAt < 45_000) return;
+    }
+    const gName = h.groupId
+      ? groups.find((g) => g.id === h.groupId)?.name ?? ""
+      : "";
+    const isMultiPing =
+      h.address.trim().startsWith("198.") ||
+      h.label.toLowerCase().includes("secorall") ||
+      gName.toLowerCase().includes("secorall");
+
+    setProbeMap((prev) => ({
+      ...prev,
+      [h.id]: {
+        state: "probing",
+        detail: isMultiPing ? "Pinging (3x)..." : "Pinging...",
+        checkedAt: Date.now(),
+      },
+    }));
+
+    if (!isTauriRuntime()) {
+      setProbeMap((prev) => ({
+        ...prev,
+        [h.id]: {
+          state: "online",
+          detail: isMultiPing ? "Online (3/3) · 18ms" : "Online · 4ms",
+          checkedAt: Date.now(),
+        },
+      }));
+      return;
+    }
+
+    try {
+      const res = await apiProbeHost(h.id);
+      setProbeMap((prev) => ({
+        ...prev,
+        [h.id]: {
+          state: res.online ? "online" : "offline",
+          detail: res.detail,
+          checkedAt: Date.now(),
+        },
+      }));
+    } catch {
+      setProbeMap((prev) => ({
+        ...prev,
+        [h.id]: {
+          state: "offline",
+          detail: "Offline",
+          checkedAt: Date.now(),
+        },
+      }));
+    }
+  };
+
+  const handleHostHoverEnter = (h: HostRecord) => {
+    if (hoverTimersRef.current[h.id]) {
+      window.clearTimeout(hoverTimersRef.current[h.id]);
+    }
+    hoverTimersRef.current[h.id] = window.setTimeout(() => {
+      void runProbeForHost(h, false);
+    }, 150);
+  };
+
+  const handleHostHoverLeave = (hostId: string) => {
+    if (hoverTimersRef.current[hostId]) {
+      window.clearTimeout(hoverTimersRef.current[hostId]);
+      delete hoverTimersRef.current[hostId];
+    }
+  };
+
+  const renderHoverProbeBadge = (h: HostRecord) => {
+    const pr = probeMap[h.id];
+    if (!pr) return null;
+    return (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          void runProbeForHost(h, true);
+        }}
+        title="Click to re-check reachability"
+        className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-mono border shrink-0 transition ${
+          pr.state === "probing"
+            ? "opacity-100 bg-amber-500/15 border-amber-400/40 text-amber-200"
+            : pr.state === "online"
+            ? "opacity-0 group-hover:opacity-100 bg-emerald-500/15 border-emerald-400/40 text-emerald-300"
+            : "opacity-0 group-hover:opacity-100 bg-red-500/15 border-red-400/40 text-red-300"
+        }`}
+      >
+        <span
+          className={`w-1.5 h-1.5 rounded-full ${
+            pr.state === "probing"
+              ? "bg-amber-400 animate-ping"
+              : pr.state === "online"
+              ? "bg-emerald-400"
+              : "bg-red-500"
+          }`}
+        />
+        <span>{pr.detail}</span>
+      </button>
+    );
+  };
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingHost, setEditingHost] = useState<HostRecord | null>(null);
@@ -973,6 +1092,8 @@ export const HostsPanel: React.FC = () => {
                             return (
                               <tr
                                 key={h.id}
+                                onMouseEnter={() => handleHostHoverEnter(h)}
+                                onMouseLeave={() => handleHostHoverLeave(h.id)}
                                 onDoubleClick={() => openHostTerminal(h)}
                                 className={`group cursor-pointer transition ${
                                   checked
@@ -997,9 +1118,10 @@ export const HostsPanel: React.FC = () => {
                                 <td className="px-3 py-2 font-semibold text-[var(--text-primary)]">
                                   <div className="flex items-center gap-2">
                                     <Server className="w-3.5 h-3.5 text-[var(--accent-primary)] shrink-0" />
-                                    <span className="truncate max-w-[220px]">
+                                    <span className="truncate max-w-[200px]">
                                       {h.label}
                                     </span>
+                                    {renderHoverProbeBadge(h)}
                                   </div>
                                 </td>
 
@@ -1143,6 +1265,8 @@ export const HostsPanel: React.FC = () => {
                         return (
                           <div
                             key={h.id}
+                            onMouseEnter={() => handleHostHoverEnter(h)}
+                            onMouseLeave={() => handleHostHoverLeave(h.id)}
                             onDoubleClick={() => openHostTerminal(h)}
                             className={`group relative flex flex-col justify-between p-3.5 rounded-xl bg-[var(--bg-panel)] hover:bg-[var(--bg-elevated)] border cursor-pointer transition shadow-xs ${
                               checked
@@ -1183,6 +1307,7 @@ export const HostsPanel: React.FC = () => {
                               </div>
 
                               <div className="flex flex-wrap items-center gap-1 mt-2">
+                                {renderHoverProbeBadge(h)}
                                 <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-white/5 text-[10px] text-[var(--text-secondary)]">
                                   <KeyRound className="w-2.5 h-2.5 text-amber-400" />
                                   {h.authMethod === "key"

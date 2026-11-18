@@ -82,9 +82,12 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
   const [snippetPicker, setSnippetPicker] = useState<{
     top: number;
     left: number;
+    triggeredByHash?: boolean;
   } | null>(null);
   const [snippetFilter, setSnippetFilter] = useState("");
+  const [snippetSelectedIdx, setSnippetSelectedIdx] = useState(0);
   const snippetMenuRef = useRef<HTMLDivElement>(null);
+  const lastHashKeyAtRef = useRef<number>(0);
 
   useEffect(() => {
     if (!splitPicker && !snippetPicker) return;
@@ -316,6 +319,45 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
           return false;
         }
       }
+
+      // Inline `##` Snippet Trigger right at the live terminal cursor!
+      if (
+        !ev.ctrlKey &&
+        !ev.altKey &&
+        !ev.metaKey &&
+        useWorkspaceStore.getState().showSnippetsSection
+      ) {
+        if (ev.key === "#") {
+          const now = performance.now();
+          if (now - lastHashKeyAtRef.current < 650) {
+            lastHashKeyAtRef.current = 0;
+            ev.preventDefault();
+            // Erase the first `#` sent to the shell
+            dispatchInputFromPane(paneRef.current, new Uint8Array([0x7f]));
+
+            const rect = el.getBoundingClientRect();
+            const approxCellW = Math.max(7, term.options.fontSize ? term.options.fontSize * 0.6 : 8);
+            const approxCellH = Math.max(15, term.options.fontSize ? term.options.fontSize * 1.25 : 17);
+            const curX = term.buffer.active.cursorX * approxCellW;
+            const curY = (term.buffer.active.cursorY + 1) * approxCellH;
+
+            setSnippetFilter("");
+            setSnippetSelectedIdx(0);
+            setSnippetPicker({
+              top: Math.max(36, Math.min(rect.top + curY + 6, window.innerHeight - 330)),
+              left: Math.max(12, Math.min(rect.left + curX, window.innerWidth - 324)),
+              triggeredByHash: true,
+            });
+            return false;
+          }
+          lastHashKeyAtRef.current = now;
+          return true;
+        }
+        if (!["Shift", "Control", "Alt", "Meta", "CapsLock"].includes(ev.key)) {
+          lastHashKeyAtRef.current = 0;
+        }
+      }
+
       return true;
     });
 
@@ -467,6 +509,7 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
                 e.stopPropagation();
                 const r = e.currentTarget.getBoundingClientRect();
                 setSnippetFilter("");
+                setSnippetSelectedIdx(0);
                 setSnippetPicker((prev) =>
                   prev
                     ? null
@@ -474,13 +517,14 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
                         top: r.bottom + 4,
                         left: Math.max(
                           8,
-                          Math.min(r.right - 280, window.innerWidth - 288)
+                          Math.min(r.right - 310, window.innerWidth - 318)
                         ),
+                        triggeredByHash: false,
                       }
                 );
               }}
               className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] text-purple-300 hover:bg-purple-500/15 transition"
-              title="Run Shared Snippet in this pane"
+              title="Run Shared Snippet (or type ## inside terminal!)"
             >
               <FileCode2 className="w-3 h-3" />
               <span>Snippets</span>
@@ -537,112 +581,189 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
         </div>
       </div>
 
-      {/* Categorized Snippets Quick-Run Picker */}
-      {snippetPicker && (
-        <div
-          ref={snippetMenuRef}
-          style={{ top: snippetPicker.top, left: snippetPicker.left }}
-          className="fixed w-72 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-accent)] shadow-2xl py-1.5 z-50 text-xs"
-        >
-          <div className="px-2.5 pb-1.5 border-b border-[var(--border-subtle)]">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-purple-300">
-                Run Snippet ({status?.activeProfile.name})
-              </span>
-              <button
-                onClick={() => {
-                  setSnippetPicker(null);
-                  setActiveSection("snippets");
-                  setActiveTab("vault");
-                }}
-                className="text-[10px] text-[var(--text-muted)] hover:text-white"
-              >
-                Manage →
-              </button>
-            </div>
-            <input
-              autoFocus
-              value={snippetFilter}
-              onChange={(e) => setSnippetFilter(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") setSnippetPicker(null);
-              }}
-              placeholder="Search snippets or categories..."
-              className="w-full px-2 py-1 rounded bg-black/40 border border-[var(--border-subtle)] text-xs text-white focus:outline-none focus:border-purple-400"
-            />
-          </div>
+      {/* Categorized Snippets Quick-Run & Inline `##` Picker */}
+      {snippetPicker && (() => {
+        const q = snippetFilter.trim().toLowerCase();
+        const flatMatches = snippets
+          .filter(
+            (s) =>
+              !q ||
+              s.name.toLowerCase().includes(q) ||
+              s.command.toLowerCase().includes(q) ||
+              (s.category ?? "").toLowerCase().includes(q) ||
+              (s.tags ?? []).some((t) => t.toLowerCase().includes(q))
+          )
+          .sort((a, b) =>
+            (a.category ?? "Uncategorized").localeCompare(
+              b.category ?? "Uncategorized"
+            ) || a.name.localeCompare(b.name)
+          );
+        const clampedIdx =
+          flatMatches.length > 0
+            ? Math.min(snippetSelectedIdx, flatMatches.length - 1)
+            : 0;
 
-          <div className="max-h-72 overflow-y-auto py-1">
-            {snippets.length === 0 ? (
-              <div className="px-3 py-4 text-center space-y-2">
-                <div className="text-[11px] text-[var(--text-muted)]">
-                  No snippets saved in this Vault yet.
-                </div>
+        const closeAndFocusTerm = () => {
+          setSnippetPicker(null);
+          requestAnimationFrame(() => xtermRef.current?.focus());
+        };
+
+        return (
+          <div
+            ref={snippetMenuRef}
+            style={{ top: snippetPicker.top, left: snippetPicker.left }}
+            className="fixed w-80 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-accent)] shadow-2xl py-1.5 z-50 text-xs"
+          >
+            <div className="px-2.5 pb-1.5 border-b border-[var(--border-subtle)]">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-purple-300">
+                  {snippetPicker.triggeredByHash ? "## Inline Snippet" : "Run Snippet"} ·{" "}
+                  {status?.activeProfile.name}
+                </span>
                 <button
                   onClick={() => {
                     setSnippetPicker(null);
                     setActiveSection("snippets");
                     setActiveTab("vault");
                   }}
-                  className="px-2.5 py-1 rounded bg-purple-600 hover:bg-purple-500 text-[11px] font-semibold text-white"
+                  className="text-[10px] text-[var(--text-muted)] hover:text-white"
                 >
-                  Open Snippets Playbook
+                  Manage →
                 </button>
               </div>
-            ) : (
-              (() => {
-                const q = snippetFilter.trim().toLowerCase();
-                const matches = snippets.filter(
-                  (s) =>
-                    !q ||
-                    s.name.toLowerCase().includes(q) ||
-                    s.command.toLowerCase().includes(q) ||
-                    (s.category ?? "").toLowerCase().includes(q)
-                );
-                if (matches.length === 0) {
-                  return (
-                    <div className="px-3 py-4 text-center text-[11px] text-[var(--text-muted)]">
-                      No matching snippets.
-                    </div>
-                  );
-                }
-                const byCat = new Map<string, typeof matches>();
-                for (const s of matches) {
-                  const c = s.category?.trim() || "Uncategorized";
-                  byCat.set(c, [...(byCat.get(c) ?? []), s]);
-                }
-                return Array.from(byCat.entries())
-                  .sort((a, b) => a[0].localeCompare(b[0]))
-                  .map(([cat, items]) => (
-                    <div key={cat}>
-                      <div className="px-3 pt-1.5 pb-0.5 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-amber-300/90">
-                        <Folder className="w-3 h-3" />
-                        <span className="truncate">{cat}</span>
-                      </div>
-                      {items.map((s) => (
+              <input
+                autoFocus
+                value={snippetFilter}
+                onChange={(e) => {
+                  setSnippetFilter(e.target.value);
+                  setSnippetSelectedIdx(0);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    closeAndFocusTerm();
+                  } else if (
+                    e.key === "#" &&
+                    snippetPicker.triggeredByHash &&
+                    snippetFilter === ""
+                  ) {
+                    // Typing a 3rd `#` inserts literal `##` into the shell cleanly!
+                    e.preventDefault();
+                    closeAndFocusTerm();
+                    dispatchInputFromPane(
+                      paneRef.current,
+                      new TextEncoder().encode("##")
+                    );
+                  } else if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    setSnippetSelectedIdx((i) =>
+                      flatMatches.length > 0 ? (i + 1) % flatMatches.length : 0
+                    );
+                  } else if (e.key === "ArrowUp") {
+                    e.preventDefault();
+                    setSnippetSelectedIdx((i) =>
+                      flatMatches.length > 0
+                        ? (i - 1 + flatMatches.length) % flatMatches.length
+                        : 0
+                    );
+                  } else if (e.key === "Enter" && flatMatches[clampedIdx]) {
+                    e.preventDefault();
+                    const chosen = flatMatches[clampedIdx];
+                    closeAndFocusTerm();
+                    void runSnippetOnPane(paneRef.current, chosen);
+                  } else if (e.key === "Tab" && flatMatches[clampedIdx]) {
+                    // Tab inserts the command onto the shell line without executing Enter!
+                    e.preventDefault();
+                    const chosen = flatMatches[clampedIdx];
+                    closeAndFocusTerm();
+                    dispatchInputFromPane(
+                      paneRef.current,
+                      new TextEncoder().encode(chosen.command)
+                    );
+                  }
+                }}
+                placeholder="Filter snippets (Enter=Run, Tab=Insert)..."
+                className="w-full px-2 py-1 rounded bg-black/40 border border-[var(--border-subtle)] text-xs text-white focus:outline-none focus:border-purple-400"
+              />
+            </div>
+
+            <div className="max-h-72 overflow-y-auto py-1">
+              {snippets.length === 0 ? (
+                <div className="px-3 py-4 text-center space-y-2">
+                  <div className="text-[11px] text-[var(--text-muted)]">
+                    No snippets saved in this Vault yet.
+                  </div>
+                  <button
+                    onClick={() => {
+                      setSnippetPicker(null);
+                      setActiveSection("snippets");
+                      setActiveTab("vault");
+                    }}
+                    className="px-2.5 py-1 rounded bg-purple-600 hover:bg-purple-500 text-[11px] font-semibold text-white"
+                  >
+                    Open Snippets Playbook
+                  </button>
+                </div>
+              ) : flatMatches.length === 0 ? (
+                <div className="px-3 py-4 text-center text-[11px] text-[var(--text-muted)]">
+                  No matching snippets.
+                </div>
+              ) : (
+                (() => {
+                  let lastCat = "";
+                  return flatMatches.map((s, idx) => {
+                    const cat = s.category?.trim() || "Uncategorized";
+                    const showHeader = cat !== lastCat;
+                    lastCat = cat;
+                    const selected = idx === clampedIdx;
+                    return (
+                      <React.Fragment key={s.id}>
+                        {showHeader && (
+                          <div className="px-3 pt-1.5 pb-0.5 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-amber-300/90">
+                            <Folder className="w-3 h-3" />
+                            <span className="truncate">{cat}</span>
+                          </div>
+                        )}
                         <button
-                          key={s.id}
+                          onMouseEnter={() => setSnippetSelectedIdx(idx)}
                           onClick={() => {
-                            setSnippetPicker(null);
+                            closeAndFocusTerm();
                             void runSnippetOnPane(paneRef.current, s);
                           }}
-                          className="w-full px-3 py-1.5 text-left hover:bg-[var(--bg-hover)] transition"
+                          className={`w-full px-3 py-1.5 text-left transition ${
+                            selected ? "bg-[var(--bg-hover)]" : ""
+                          }`}
                         >
-                          <div className="font-medium text-[var(--text-primary)] truncate">
-                            {s.name}
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-medium text-[var(--text-primary)] truncate">
+                              {s.name}
+                            </span>
+                            {selected && (
+                              <span className="text-[9px] font-mono text-purple-300 shrink-0">
+                                ↵ Run · Tab Insert
+                              </span>
+                            )}
                           </div>
                           <div className="text-[10px] font-mono text-purple-300/80 truncate">
                             {s.command}
                           </div>
                         </button>
-                      ))}
-                    </div>
-                  ));
-              })()
+                      </React.Fragment>
+                    );
+                  });
+                })()
+              )}
+            </div>
+
+            {snippetPicker.triggeredByHash && (
+              <div className="px-3 pt-1 border-t border-[var(--border-subtle)] flex items-center justify-between text-[9px] font-mono text-[var(--text-muted)]">
+                <span>↑↓ Select · Enter Run · Tab Paste</span>
+                <span># Literal ##</span>
+              </div>
             )}
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Split Target Picker (Choose any Saved SSH Host or Local Shell!) */}
       {splitPicker && (

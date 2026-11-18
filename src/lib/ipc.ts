@@ -3,6 +3,7 @@ import type {
   ActiveTunnelRuntime,
   GitSyncStatus,
   GroupRecord,
+  HostProbeResult,
   HostRecord,
   ShellProfile,
   SftpEntry,
@@ -211,6 +212,9 @@ export const apiSshClose = (sessionId: string) =>
 
 export const apiRespondHostKeyPrompt = (requestId: string, accept: boolean) =>
   invoke<void>("ssh_respond_host_key", { requestId, accept });
+
+export const apiProbeHost = (hostId: string) =>
+  invoke<HostProbeResult>("ssh_probe_host", { hostId });
 
 /* ─── SFTP File Browser (Local & Remote) ─── */
 export const apiLocalListDir = (path?: string | null) =>

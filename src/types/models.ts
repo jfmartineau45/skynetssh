@@ -36,6 +36,15 @@ export interface HostRecord {
   updatedAt: number;
 }
 
+export interface HostProbeResult {
+  hostId: string;
+  online: boolean;
+  latencyMs?: number | null;
+  passedProbes: number;
+  totalProbes: number;
+  detail: string;
+}
+
 export interface SshKeyRecord {
   id: string;
   name: string;
