@@ -77,6 +77,7 @@ export interface SnippetRecord {
   name: string;
   command: string;
   description?: string | null;
+  category?: string | null;
   tags: string[];
   updatedAt: number;
 }

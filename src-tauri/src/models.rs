@@ -85,6 +85,9 @@ pub struct SnippetRecord {
     pub name: String,
     pub command: String,
     pub description: Option<String>,
+    #[serde(default)]
+    pub category: Option<String>,
+    #[serde(default)]
     pub tags: Vec<String>,
     pub updated_at: i64,
 }

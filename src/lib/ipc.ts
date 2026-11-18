@@ -135,6 +135,14 @@ export const apiImportSshConfig = () =>
 export const apiImportTermiusJson = (filePath: string) =>
   invoke<number>("import_termius_json", { filePath });
 
+export const apiExportSnippetsJson = (
+  filePath: string,
+  category?: string | null
+) => invoke<number>("snippets_export_json", { filePath, category });
+
+export const apiImportSnippetsJson = (filePath: string) =>
+  invoke<number>("snippets_import_json", { filePath });
+
 export const apiGitStatus = () => invoke<GitSyncStatus>("sync_git_status");
 
 export const apiGitInitRemote = (remoteUrl: string) =>

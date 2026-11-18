@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type {
   HostRecord,
   ShellProfile,
+  SnippetRecord,
   SplitNode,
   TerminalPaneConfig,
   ThemeId,
@@ -9,6 +10,7 @@ import type {
   WorkspaceTab,
 } from "../types/models";
 import { apiPtyWrite, apiSshWrite } from "../lib/ipc";
+import { extractSnippetVariables } from "../lib/snippets";
 import { useVaultStore } from "./useVaultStore";
 
 const uid = () => crypto.randomUUID();
@@ -107,6 +109,8 @@ interface WorkspaceState {
   setCopyOnSelect: (val: boolean) => void;
   rightClickPaste: boolean;
   setRightClickPaste: (val: boolean) => void;
+  showSnippetsSection: boolean;
+  setShowSnippetsSection: (val: boolean) => void;
 
   tabs: WorkspaceTab[];
   activeTabId: string;
@@ -154,6 +158,16 @@ interface WorkspaceState {
     pane: TerminalPaneConfig,
     command: string
   ) => Promise<void>;
+  pendingSnippetPrompt: {
+    pane: TerminalPaneConfig;
+    snippet: SnippetRecord;
+    variables: string[];
+  } | null;
+  runSnippetOnPane: (
+    pane: TerminalPaneConfig,
+    snippet: SnippetRecord
+  ) => Promise<void>;
+  clearPendingSnippetPrompt: () => void;
 
   /* SFTP Transfers */
   transfers: TransferProgressEvent[];
@@ -196,6 +210,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   setRightClickPaste: (rightClickPaste) => {
     localStorage.setItem("skynet_right_click_paste", String(rightClickPaste));
     set({ rightClickPaste });
+  },
+  showSnippetsSection:
+    localStorage.getItem("skynet_show_snippets") !== "false",
+  setShowSnippetsSection: (showSnippetsSection) => {
+    localStorage.setItem("skynet_show_snippets", String(showSnippetsSection));
+    set({ showSnippetsSection });
   },
 
   tabs: [{ id: "vault", kind: "vault", title: "Vault", pinned: true }],
@@ -450,6 +470,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const payload = command.endsWith("\n") ? command : `${command}\r`;
     await get().dispatchInputFromPane(pane, encoder.encode(payload));
   },
+  pendingSnippetPrompt: null,
+  runSnippetOnPane: async (pane, snippet) => {
+    const variables = extractSnippetVariables(snippet.command);
+    if (variables.length === 0) {
+      await get().injectSnippetToPane(pane, snippet.command);
+    } else {
+      set({ pendingSnippetPrompt: { pane, snippet, variables } });
+    }
+  },
+  clearPendingSnippetPrompt: () => set({ pendingSnippetPrompt: null }),
 
   transfers: [],
   upsertTransfer: (ev) => {

@@ -10,6 +10,8 @@ import {
   X,
   RotateCw,
   FolderSync,
+  FileCode2,
+  Folder,
   Search,
   Radio,
   Terminal as TerminalIcon,
@@ -41,7 +43,9 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
     terminalFontSize,
     copyOnSelect,
     rightClickPaste,
+    showSnippetsSection,
     shells,
+    setActiveTab,
     setActivePane,
     updatePane,
     splitPane,
@@ -51,9 +55,10 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
     broadcastPaneIds,
     togglePaneInBroadcast,
     dispatchInputFromPane,
+    runSnippetOnPane,
   } = useWorkspaceStore();
 
-  const { status, hosts, snippets } = useVaultStore();
+  const { status, hosts, snippets, setActiveSection } = useVaultStore();
 
   const containerRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
@@ -74,19 +79,34 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
   const [splitFilter, setSplitFilter] = useState("");
   const splitMenuRef = useRef<HTMLDivElement>(null);
 
+  const [snippetPicker, setSnippetPicker] = useState<{
+    top: number;
+    left: number;
+  } | null>(null);
+  const [snippetFilter, setSnippetFilter] = useState("");
+  const snippetMenuRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
-    if (!splitPicker) return;
+    if (!splitPicker && !snippetPicker) return;
     const onDown = (e: MouseEvent) => {
       if (
+        splitPicker &&
         splitMenuRef.current &&
         !splitMenuRef.current.contains(e.target as Node)
       ) {
         setSplitPicker(null);
       }
+      if (
+        snippetPicker &&
+        snippetMenuRef.current &&
+        !snippetMenuRef.current.contains(e.target as Node)
+      ) {
+        setSnippetPicker(null);
+      }
     };
     window.addEventListener("mousedown", onDown);
     return () => window.removeEventListener("mousedown", onDown);
-  }, [splitPicker]);
+  }, [splitPicker, snippetPicker]);
 
   const inBroadcast =
     broadcastEnabled && broadcastPaneIds.includes(pane.id);
@@ -441,6 +461,31 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
 
         {/* Pane Controls */}
         <div className="flex items-center gap-0.5">
+          {showSnippetsSection && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                const r = e.currentTarget.getBoundingClientRect();
+                setSnippetFilter("");
+                setSnippetPicker((prev) =>
+                  prev
+                    ? null
+                    : {
+                        top: r.bottom + 4,
+                        left: Math.max(
+                          8,
+                          Math.min(r.right - 280, window.innerWidth - 288)
+                        ),
+                      }
+                );
+              }}
+              className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] text-purple-300 hover:bg-purple-500/15 transition"
+              title="Run Shared Snippet in this pane"
+            >
+              <FileCode2 className="w-3 h-3" />
+              <span>Snippets</span>
+            </button>
+          )}
           {pane.kind === "ssh" && pane.hostId && (
             <button
               onClick={(e) => {
@@ -491,6 +536,113 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
           </button>
         </div>
       </div>
+
+      {/* Categorized Snippets Quick-Run Picker */}
+      {snippetPicker && (
+        <div
+          ref={snippetMenuRef}
+          style={{ top: snippetPicker.top, left: snippetPicker.left }}
+          className="fixed w-72 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-accent)] shadow-2xl py-1.5 z-50 text-xs"
+        >
+          <div className="px-2.5 pb-1.5 border-b border-[var(--border-subtle)]">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-purple-300">
+                Run Snippet ({status?.activeProfile.name})
+              </span>
+              <button
+                onClick={() => {
+                  setSnippetPicker(null);
+                  setActiveSection("snippets");
+                  setActiveTab("vault");
+                }}
+                className="text-[10px] text-[var(--text-muted)] hover:text-white"
+              >
+                Manage →
+              </button>
+            </div>
+            <input
+              autoFocus
+              value={snippetFilter}
+              onChange={(e) => setSnippetFilter(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setSnippetPicker(null);
+              }}
+              placeholder="Search snippets or categories..."
+              className="w-full px-2 py-1 rounded bg-black/40 border border-[var(--border-subtle)] text-xs text-white focus:outline-none focus:border-purple-400"
+            />
+          </div>
+
+          <div className="max-h-72 overflow-y-auto py-1">
+            {snippets.length === 0 ? (
+              <div className="px-3 py-4 text-center space-y-2">
+                <div className="text-[11px] text-[var(--text-muted)]">
+                  No snippets saved in this Vault yet.
+                </div>
+                <button
+                  onClick={() => {
+                    setSnippetPicker(null);
+                    setActiveSection("snippets");
+                    setActiveTab("vault");
+                  }}
+                  className="px-2.5 py-1 rounded bg-purple-600 hover:bg-purple-500 text-[11px] font-semibold text-white"
+                >
+                  Open Snippets Playbook
+                </button>
+              </div>
+            ) : (
+              (() => {
+                const q = snippetFilter.trim().toLowerCase();
+                const matches = snippets.filter(
+                  (s) =>
+                    !q ||
+                    s.name.toLowerCase().includes(q) ||
+                    s.command.toLowerCase().includes(q) ||
+                    (s.category ?? "").toLowerCase().includes(q)
+                );
+                if (matches.length === 0) {
+                  return (
+                    <div className="px-3 py-4 text-center text-[11px] text-[var(--text-muted)]">
+                      No matching snippets.
+                    </div>
+                  );
+                }
+                const byCat = new Map<string, typeof matches>();
+                for (const s of matches) {
+                  const c = s.category?.trim() || "Uncategorized";
+                  byCat.set(c, [...(byCat.get(c) ?? []), s]);
+                }
+                return Array.from(byCat.entries())
+                  .sort((a, b) => a[0].localeCompare(b[0]))
+                  .map(([cat, items]) => (
+                    <div key={cat}>
+                      <div className="px-3 pt-1.5 pb-0.5 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-amber-300/90">
+                        <Folder className="w-3 h-3" />
+                        <span className="truncate">{cat}</span>
+                      </div>
+                      {items.map((s) => (
+                        <button
+                          key={s.id}
+                          onClick={() => {
+                            setSnippetPicker(null);
+                            void runSnippetOnPane(paneRef.current, s);
+                          }}
+                          className="w-full px-3 py-1.5 text-left hover:bg-[var(--bg-hover)] transition"
+                        >
+                          <div className="font-medium text-[var(--text-primary)] truncate">
+                            {s.name}
+                          </div>
+                          <div className="text-[10px] font-mono text-purple-300/80 truncate">
+                            {s.command}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  ));
+              })()
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Split Target Picker (Choose any Saved SSH Host or Local Shell!) */}
       {splitPicker && (

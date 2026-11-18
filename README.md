@@ -62,8 +62,8 @@
 - **Remote (`-R`):** Bind a remote port via `tcpip-forward` and route incoming `forwarded-tcpip` connections back to a local service.
 - **Dynamic SOCKS5 (`-D`):** Built-in async RFC 1928 SOCKS5 proxy server (IPv4, IPv6, and domain resolution) over SSH—run tunnels independently in the background with live active-connection counts.
 
-### 7. Snippets, Multi-Host Broadcast, Command Palette & Themes
-- **Parameterized Snippets:** Store reusable commands with `{{variable}}` placeholders that prompt for values before running, or attach snippets as automatic host startup commands.
+### 7. Shared Categorized Snippets Playbook, Broadcast & Themes
+- **Team-Shared & Categorized Snippets:** Organize frequent ops commands into **Category Folders** (`Docker & Containers`, `Linux & Systemd`, `Networking & TLS`, `Disk & Performance`, or custom folders) with `#tag` filters, synced live across teammates in your **Team SharePoint / OneDrive Vault**, plus 1-click **Starter Ops Pack**, **JSON Export/Import** across Vaults, an inline **Snippets** picker on every terminal pane header, `{{variable}}` interactive prompts (preserving Docker/Go `{{.Names}}` templates), and an optional UI visibility toggle.
 - **Multi-Host Broadcast Mode:** Toggle **Broadcast** in the title bar to mirror keystrokes simultaneously across all selected panes (highlighted with amber tactical borders).
 - **Command Palette (`Ctrl+K`):** Fuzzy-search launcher to connect to hosts, open Dual-Pane SFTP, spawn local shells, toggle tunnels, run snippets, or switch themes.
 - **5 Built-In Themes (Live-Switching):**

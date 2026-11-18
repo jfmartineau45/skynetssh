@@ -36,7 +36,8 @@ export const CommandPalette: React.FC = () => {
     splitPane,
     tabs,
     activeTabId,
-    injectSnippetToPane,
+    runSnippetOnPane,
+    showSnippetsSection,
     setTheme,
   } = useWorkspaceStore();
 
@@ -137,15 +138,15 @@ export const CommandPalette: React.FC = () => {
       });
     }
 
-    if (activePane) {
+    if (activePane && showSnippetsSection) {
       for (const snip of snippets) {
         list.push({
           id: `snip-${snip.id}`,
-          category: "Run Snippet",
+          category: snip.category ? `Snippet · ${snip.category}` : "Run Snippet",
           title: `Run Snippet: ${snip.name}`,
           subtitle: snip.command,
           icon: <FileCode2 className="w-4 h-4 text-purple-400" />,
-          run: () => injectSnippetToPane(activePane, snip.command),
+          run: () => runSnippetOnPane(activePane, snip),
         });
       }
     }
@@ -183,7 +184,8 @@ export const CommandPalette: React.FC = () => {
     openLocalTerminal,
     splitPane,
     refreshTunnels,
-    injectSnippetToPane,
+    runSnippetOnPane,
+    showSnippetsSection,
     setTheme,
   ]);
 

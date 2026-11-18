@@ -8,6 +8,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { useVaultStore, type VaultSection } from "../../store/useVaultStore";
+import { useWorkspaceStore } from "../../store/useWorkspaceStore";
 import { HostsPanel } from "./HostsPanel";
 import { KeychainPanel } from "./KeychainPanel";
 import { TunnelsPanel } from "./TunnelsPanel";
@@ -28,6 +29,7 @@ export const VaultDashboard: React.FC = () => {
     activeTunnels,
   } = useVaultStore();
 
+  const { showSnippetsSection } = useWorkspaceStore();
   const isTeam = status?.activeProfile?.kind === "team";
 
   const runningTunnelCount = Object.values(activeTunnels).filter(
@@ -61,12 +63,16 @@ export const VaultDashboard: React.FC = () => {
           ? `${runningTunnelCount}/${tunnels.length}`
           : tunnels.length,
     },
-    {
-      id: "snippets",
-      label: "Snippets",
-      icon: <FileCode2 className="w-4 h-4" />,
-      badge: snippets.length,
-    },
+    ...(showSnippetsSection
+      ? [
+          {
+            id: "snippets" as VaultSection,
+            label: "Snippets",
+            icon: <FileCode2 className="w-4 h-4" />,
+            badge: snippets.length,
+          },
+        ]
+      : []),
     {
       id: "known_hosts",
       label: "Known Hosts",

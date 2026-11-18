@@ -59,6 +59,8 @@ export const SyncSettingsPanel: React.FC = () => {
     setCopyOnSelect,
     rightClickPaste,
     setRightClickPaste,
+    showSnippetsSection,
+    setShowSnippetsSection,
     terminalFontSize,
     adjustFontSize,
   } = useWorkspaceStore();
@@ -602,6 +604,15 @@ export const SyncSettingsPanel: React.FC = () => {
                 type="checkbox"
                 checked={rightClickPaste}
                 onChange={(e) => setRightClickPaste(e.target.checked)}
+                className="accent-[var(--accent-primary)]"
+              />
+            </label>
+            <label className="flex items-center justify-between cursor-pointer">
+              <span>Show Snippets playbook in Vault & terminal bar</span>
+              <input
+                type="checkbox"
+                checked={showSnippetsSection}
+                onChange={(e) => setShowSnippetsSection(e.target.checked)}
                 className="accent-[var(--accent-primary)]"
               />
             </label>

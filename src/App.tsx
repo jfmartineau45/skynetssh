@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { TitleBar } from "./components/chrome/TitleBar";
 import { CommandPalette } from "./components/chrome/CommandPalette";
 import { HostKeyModal } from "./components/chrome/HostKeyModal";
+import { SnippetPromptModal } from "./components/chrome/SnippetPromptModal";
 import { VaultUnlockModal } from "./components/vault/VaultUnlockModal";
 import { VaultDashboard } from "./components/vault/VaultDashboard";
 import { SessionTabView } from "./components/terminal/SessionTabView";
@@ -170,6 +171,7 @@ export const App: React.FC = () => {
 
       <VaultUnlockModal />
       <HostKeyModal />
+      <SnippetPromptModal />
       <CommandPalette />
     </div>
   );

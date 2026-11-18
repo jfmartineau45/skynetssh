@@ -7,7 +7,7 @@ use russh::keys::{decode_secret_key, HashAlg};
 use serde_json::Value;
 
 use crate::models::{
-    DiscoveredSshHost, DiscoveredSshKey, GitSyncStatus, HostRecord, SshFolderScan,
+    DiscoveredSshHost, DiscoveredSshKey, GitSyncStatus, HostRecord, SnippetRecord, SshFolderScan,
 };
 use crate::ssh::SshPool;
 use crate::vault::VaultEngine;
@@ -499,9 +499,130 @@ pub fn git_sync_now(vault_dir: &Path) -> Result<GitSyncStatus> {
     Ok(st)
 }
 
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SnippetPackFile {
+    #[serde(default)]
+    format: Option<String>,
+    #[serde(default)]
+    exported_at: Option<i64>,
+    snippets: Vec<SnippetRecord>,
+}
+
+pub fn export_snippets_json(
+    vault: &VaultEngine,
+    file_path: &Path,
+    category: Option<&str>,
+) -> Result<usize> {
+    let snap = vault.snapshot()?;
+    let filtered: Vec<SnippetRecord> = snap
+        .snippets
+        .into_iter()
+        .filter(|s| match category {
+            None => true,
+            Some(cat) => s
+                .category
+                .as_deref()
+                .map(|c| c.eq_ignore_ascii_case(cat))
+                .unwrap_or(false),
+        })
+        .collect();
+
+    let count = filtered.len();
+    let payload = SnippetPackFile {
+        format: Some("skynetssh-snippets-v1".into()),
+        exported_at: Some(chrono::Utc::now().timestamp_millis()),
+        snippets: filtered,
+    };
+    fs::write(file_path, serde_json::to_string_pretty(&payload)?)?;
+    Ok(count)
+}
+
+pub fn import_snippets_json(vault: &VaultEngine, file_path: &Path) -> Result<usize> {
+    let raw = fs::read_to_string(file_path)?;
+    let incoming: Vec<SnippetRecord> = if let Ok(pack) = serde_json::from_str::<SnippetPackFile>(&raw)
+    {
+        pack.snippets
+    } else {
+        serde_json::from_str::<Vec<SnippetRecord>>(&raw)
+            .map_err(|e| anyhow!("Invalid Snippets JSON file: {e}"))?
+    };
+
+    let existing = vault.snapshot()?.snippets;
+    let now = chrono::Utc::now().timestamp_millis();
+    let mut imported = 0usize;
+
+    for mut item in incoming {
+        let name = item.name.trim().to_string();
+        let command = item.command.trim().to_string();
+        if name.is_empty() || command.is_empty() {
+            continue;
+        }
+        let already_exists = existing.iter().any(|e| {
+            e.name.eq_ignore_ascii_case(&name) && e.command.trim() == command
+        });
+        if already_exists {
+            continue;
+        }
+        item.id = uuid::Uuid::new_v4().to_string();
+        item.name = name;
+        item.command = command;
+        item.category = item
+            .category
+            .map(|c| c.trim().to_string())
+            .filter(|c| !c.is_empty());
+        item.updated_at = now;
+        vault.save_snippet(&item)?;
+        imported += 1;
+    }
+
+    Ok(imported)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_snippets_export_and_dedup_import() {
+        let dir_a =
+            std::env::temp_dir().join(format!("skynet_snip_a_{}", uuid::Uuid::new_v4()));
+        let dir_b =
+            std::env::temp_dir().join(format!("skynet_snip_b_{}", uuid::Uuid::new_v4()));
+        let json_path =
+            std::env::temp_dir().join(format!("skynet_pack_{}.json", uuid::Uuid::new_v4()));
+
+        let mut vault_a = VaultEngine::new(dir_a.clone()).unwrap();
+        vault_a.initialize("PassA-123!", 0).unwrap();
+        vault_a
+            .save_snippet(&SnippetRecord {
+                id: "s-1".into(),
+                name: "Tail Logs".into(),
+                command: "docker logs -f {{container}}".into(),
+                description: Some("Follow container logs".into()),
+                category: Some("Docker".into()),
+                tags: vec!["ops".into()],
+                updated_at: 1000,
+            })
+            .unwrap();
+
+        let exported = export_snippets_json(&vault_a, &json_path, Some("Docker")).unwrap();
+        assert_eq!(exported, 1);
+
+        let mut vault_b = VaultEngine::new(dir_b.clone()).unwrap();
+        vault_b.initialize("PassB-123!", 0).unwrap();
+        assert_eq!(import_snippets_json(&vault_b, &json_path).unwrap(), 1);
+        // Second import deduplicates cleanly
+        assert_eq!(import_snippets_json(&vault_b, &json_path).unwrap(), 0);
+        assert_eq!(
+            vault_b.snapshot().unwrap().snippets[0].category.as_deref(),
+            Some("Docker")
+        );
+
+        let _ = fs::remove_file(json_path);
+        let _ = fs::remove_dir_all(dir_a);
+        let _ = fs::remove_dir_all(dir_b);
+    }
 
     #[test]
     fn test_parse_openssh_config() {

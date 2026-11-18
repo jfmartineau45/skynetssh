@@ -405,6 +405,23 @@ fn import_termius_json(file_path: String, state: State<'_, AppState>) -> CmdResu
 }
 
 #[tauri::command]
+fn snippets_export_json(
+    file_path: String,
+    category: Option<String>,
+    state: State<'_, AppState>,
+) -> CmdResult<usize> {
+    let guard = state.vault.lock().map_err(err_str)?;
+    sync::export_snippets_json(&guard, std::path::Path::new(&file_path), category.as_deref())
+        .map_err(err_str)
+}
+
+#[tauri::command]
+fn snippets_import_json(file_path: String, state: State<'_, AppState>) -> CmdResult<usize> {
+    let guard = state.vault.lock().map_err(err_str)?;
+    sync::import_snippets_json(&guard, std::path::Path::new(&file_path)).map_err(err_str)
+}
+
+#[tauri::command]
 fn sync_git_status(state: State<'_, AppState>) -> CmdResult<GitSyncStatus> {
     let dir = {
         let guard = state.vault.lock().map_err(err_str)?;
@@ -794,6 +811,8 @@ pub fn run() {
             ssh_sniff_folder,
             import_ssh_config,
             import_termius_json,
+            snippets_export_json,
+            snippets_import_json,
             sync_git_status,
             sync_git_init_remote,
             sync_git_now,
