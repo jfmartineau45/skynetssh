@@ -467,3 +467,37 @@ pub async fn edit_remote_file_locally(
 
     Ok(local_file_path.to_string_lossy().to_string())
 }
+
+const MAX_PREVIEW_BYTES: u64 = 65_536;
+
+pub fn local_preview_file(path: &str) -> Result<(String, bool)> {
+    let mut f = fs::File::open(path)?;
+    let total_len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    let mut buf = Vec::with_capacity(MAX_PREVIEW_BYTES as usize);
+    use std::io::Read;
+    (&mut f).take(MAX_PREVIEW_BYTES).read_to_end(&mut buf)?;
+    let text = String::from_utf8_lossy(&buf).into_owned();
+    Ok((text, total_len > MAX_PREVIEW_BYTES))
+}
+
+pub async fn remote_preview_file(
+    pool: &SshPool,
+    host_id: &str,
+    remote_path: &str,
+    vault: Arc<std::sync::Mutex<VaultEngine>>,
+    app_handle: AppHandle,
+) -> Result<(String, bool)> {
+    let sftp = open_sftp_session(pool, host_id, vault, app_handle).await?;
+    let total_len = sftp
+        .metadata(remote_path)
+        .await
+        .ok()
+        .and_then(|m| m.size)
+        .unwrap_or(0);
+    let r_file = sftp.open(remote_path).await?;
+    let mut buf = Vec::with_capacity(MAX_PREVIEW_BYTES as usize);
+    r_file.take(MAX_PREVIEW_BYTES).read_to_end(&mut buf).await?;
+    let _ = sftp.close().await;
+    let text = String::from_utf8_lossy(&buf).into_owned();
+    Ok((text, total_len > MAX_PREVIEW_BYTES))
+}

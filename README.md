@@ -52,8 +52,9 @@
   - **Password Auth:** Stored encrypted inside your host envelope.
 - **Interactive `known_hosts` Verification:** Trust-On-First-Use (TOFU) SHA-256 fingerprint modal and high-visibility Man-In-The-Middle warning if a remote host key ever changes.
 
-### 5. Dual-Pane SFTP + Quick In-Session SFTP Drawer
-- **Quick SFTP Drawer:** Toggle a slide-out SFTP browser inside any active SSH tab, reusing the live SSH connection with zero re-authentication.
+### 5. Dual-Pane SFTP + Epic Quick In-Session SFTP Drawer
+- **Drag-Resizable Quick SFTP Drawer:** Toggle a slide-out SFTP browser inside any active SSH tab, reusing the live SSH connection with zero re-authentication, embedded transfer progress, clickable path breadcrumbs, quick Linux bookmarks (`~`, `/`, `/etc`, `/var/log`, `/opt`, `/tmp`), and **Windows Explorer drag-and-drop upload**.
+- **Latest-Modified Triage & Terminal Sync:** Live **Modified** recency badges (`Just now`, `5m ago`, `2h ago` + full timestamp hover), sortable `Name / Modified / Size` columns, 1-click **`⚡ Latest`** mode (surfaces newly modified logs/configs right to row #1 above older folders), **`.*` dotfiles toggle**, instant 64 KB **Quick Peek** file viewer, and 1-click **`cd` Here** / **`tail -f` in Terminal** actions.
 - **Dedicated Dual-Pane SFTP Tab:** Side-by-side panes where either side can be **Local PC** or **Any Saved Remote Host**—supporting `Local <-> Remote` transfers and direct streamed **`Remote A <-> Remote B`** transfers.
 - **Remote File Tools:** Live chunked progress dock, `mkdir`, rename, delete, octal `chmod` permissions modal, and **"Edit Locally"** (downloads to a sanitized temp directory, opens in your default Windows editor via `ShellExecuteW`, watches for saves, and auto-uploads back over SFTP).
 

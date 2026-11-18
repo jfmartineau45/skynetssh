@@ -2,6 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { parseSshConnectionString } from "./sshParser.ts";
 import { extractSnippetVariables, resolveSnippetCommand } from "./snippets.ts";
+import {
+  formatModifiedDisplay,
+  posixQuote,
+  sortSftpEntries,
+} from "./sftpUtils.ts";
 
 test("parseSshConnectionString handles ssh -p, host:port, and IPv6", () => {
   assert.deepEqual(
@@ -37,4 +42,37 @@ test("extractSnippetVariables prompts user variables while preserving Docker {{.
     }),
     "docker logs -f --tail 200 paperless-webserver && echo paperless-webserver"
   );
+});
+
+test("sftpUtils formats relative modified times, quotes POSIX paths safely, and sorts newest first", () => {
+  assert.equal(posixQuote("/var/log/app's $(rm -rf).log"), "'/var/log/app'\\''s $(rm -rf).log'");
+
+  const nowMs = 1_700_000_000_000;
+  assert.equal(formatModifiedDisplay(1_699_999_980, nowMs).short, "Just now");
+  assert.equal(formatModifiedDisplay(1_700_000_000 - 300, nowMs).short, "5m ago");
+  assert.equal(formatModifiedDisplay(1_700_000_000 - 7200, nowMs).short, "2h ago");
+
+  const items = [
+    {
+      name: "old-folder",
+      path: "/old-folder",
+      isDir: true,
+      isSymlink: false,
+      size: 0,
+      modifiedAt: 1000,
+      permissionsDisplay: "drwxr-xr-x",
+    },
+    {
+      name: "fresh.log",
+      path: "/fresh.log",
+      isDir: false,
+      isSymlink: false,
+      size: 512,
+      modifiedAt: 9999,
+      permissionsDisplay: "-rw-r--r--",
+    },
+  ];
+  // Pure modified desc (dirsFirst=false) surfaces fresh.log above old-folder!
+  const sortedLatest = sortSftpEntries(items, "modified", "desc", false);
+  assert.equal(sortedLatest[0].name, "fresh.log");
 });

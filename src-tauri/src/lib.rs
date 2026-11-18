@@ -685,6 +685,31 @@ async fn sftp_edit_locally(
     .map_err(err_str)
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FilePreviewPayload {
+    content: String,
+    truncated: bool,
+}
+
+#[tauri::command]
+async fn sftp_preview_file(
+    host_id: Option<String>,
+    path: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> CmdResult<FilePreviewPayload> {
+    let (content, truncated) = match host_id {
+        Some(hid) => {
+            sftp::remote_preview_file(&state.ssh, &hid, &path, state.vault.clone(), app)
+                .await
+                .map_err(err_str)?
+        }
+        None => sftp::local_preview_file(&path).map_err(err_str)?,
+    };
+    Ok(FilePreviewPayload { content, truncated })
+}
+
 /* ─── Port Forwarding / Tunnel Commands ─── */
 #[tauri::command]
 async fn tunnel_list_active(state: State<'_, AppState>) -> CmdResult<Vec<ActiveTunnelRuntime>> {
@@ -837,6 +862,7 @@ pub fn run() {
             sftp_remote_chmod,
             sftp_transfer,
             sftp_edit_locally,
+            sftp_preview_file,
             tunnel_list_active,
             tunnel_start,
             tunnel_stop,

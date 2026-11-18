@@ -265,6 +265,15 @@ export const apiSftpTransfer = (
 export const apiSftpEditLocally = (hostId: string, remotePath: string) =>
   invoke<string>("sftp_edit_locally", { hostId, remotePath });
 
+export const apiSftpPreviewFile = (
+  hostId: string | null,
+  path: string
+) =>
+  invoke<{ content: string; truncated: boolean }>("sftp_preview_file", {
+    hostId,
+    path,
+  });
+
 /* ─── Port Forwarding / Tunnels ─── */
 export const apiTunnelListActive = () =>
   invoke<ActiveTunnelRuntime[]>("tunnel_list_active");
