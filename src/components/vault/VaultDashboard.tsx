@@ -151,8 +151,11 @@ export const VaultDashboard: React.FC = () => {
                 : status?.activeProfile.name || "Personal Vault"}
             </span>
           </div>
-          <div className="text-[10px] text-[var(--text-muted)] font-mono">
-            Conflict-Free LWW · XChaCha20
+          <div className="flex items-center justify-between text-[10px] text-[var(--text-muted)] font-mono">
+            <span>
+              {status?.readOnly ? "MEMBER · READ-ONLY" : "ADMIN · R/W"}
+            </span>
+            <span>XChaCha20</span>
           </div>
         </div>
       </aside>

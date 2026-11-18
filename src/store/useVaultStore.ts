@@ -113,6 +113,8 @@ interface VaultState {
   deleteGroup: (id: string) => Promise<void>;
 
   saveHost: (h: HostRecord) => Promise<HostRecord>;
+  bulkSaveHosts: (list: HostRecord[]) => Promise<void>;
+  bulkDeleteHosts: (ids: string[]) => Promise<void>;
   deleteHost: (id: string) => Promise<void>;
 
   importKeyPem: (
@@ -359,6 +361,14 @@ export const useVaultStore = create<VaultState>((set, get) => ({
     const saved = await apiSaveHost(h);
     await get().reloadSnapshot();
     return saved;
+  },
+  bulkSaveHosts: async (list) => {
+    await Promise.all(list.map((h) => apiSaveHost(h)));
+    await get().reloadSnapshot();
+  },
+  bulkDeleteHosts: async (ids) => {
+    await Promise.all(ids.map((id) => apiDeleteHost(id)));
+    await get().reloadSnapshot();
   },
   deleteHost: async (id) => {
     await apiDeleteHost(id);

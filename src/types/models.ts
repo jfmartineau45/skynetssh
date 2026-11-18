@@ -143,6 +143,7 @@ export interface TotpSetupPayload {
 export interface VaultStatus {
   initialized: boolean;
   unlocked: boolean;
+  readOnly: boolean;
   vaultPath: string;
   activeProfile: VaultProfile;
   profiles: VaultProfile[];

@@ -482,9 +482,18 @@ impl VaultEngine {
             VaultSnapshot::default()
         };
 
+        let read_only = fs::metadata(&self.meta_path())
+            .map(|m| m.permissions().readonly())
+            .unwrap_or_else(|_| {
+                fs::metadata(self.vault_dir())
+                    .map(|m| m.permissions().readonly())
+                    .unwrap_or(false)
+            });
+
         VaultStatus {
             initialized: self.is_initialized(),
             unlocked: self.is_unlocked(),
+            read_only,
             vault_path: active.path.clone(),
             active_profile: active,
             profiles: self.profiles.clone(),

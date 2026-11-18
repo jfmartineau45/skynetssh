@@ -137,6 +137,7 @@ pub struct TotpSetupPayload {
 pub struct VaultStatus {
     pub initialized: bool,
     pub unlocked: bool,
+    pub read_only: bool,
     pub vault_path: String,
     pub active_profile: VaultProfile,
     pub profiles: Vec<VaultProfile>,
