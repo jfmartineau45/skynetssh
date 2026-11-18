@@ -65,11 +65,30 @@ fn validate_record_id(id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Read string with retry backoff for transient OneDrive / SharePoint download locks (OS error 32).
+fn read_string_with_retry(path: &Path) -> Result<String> {
+    let mut last_err = None;
+    for attempt in 1..=6 {
+        match fs::read_to_string(path) {
+            Ok(s) => return Ok(s),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(e.into()),
+            Err(e) => {
+                last_err = Some(e);
+                thread::sleep(Duration::from_millis(35 * attempt));
+            }
+        }
+    }
+    Err(anyhow!(
+        "Failed reading {path:?} after OneDrive lock retries: {}",
+        last_err.unwrap()
+    ))
+}
+
 /// Atomic write with unique temp file + retry backoff for OneDrive / SharePoint file-sync locks (OS error 32).
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     let rand_tag = rand::thread_rng().next_u32();
     let tmp_name = format!(
-        "{}.{rand_tag:08x}.tmp",
+        "~${}.{rand_tag:08x}.tmp",
         path.file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("record")
@@ -78,12 +97,12 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     fs::write(&tmp, bytes)?;
 
     let mut last_err = None;
-    for attempt in 1..=5 {
+    for attempt in 1..=8 {
         match fs::rename(&tmp, path) {
             Ok(()) => return Ok(()),
             Err(e) => {
                 last_err = Some(e);
-                thread::sleep(Duration::from_millis(40 * attempt));
+                thread::sleep(Duration::from_millis(45 * attempt));
             }
         }
     }
@@ -631,7 +650,7 @@ impl VaultEngine {
         remember_days: u32,
         now_ms: i64,
     ) -> Result<VaultSnapshot> {
-        let raw = fs::read_to_string(self.meta_path())
+        let raw = read_string_with_retry(&self.meta_path())
             .context("Vault metadata file not found")?;
         let meta: VaultMetaFile = serde_json::from_str(&raw)?;
 
@@ -949,7 +968,7 @@ impl VaultEngine {
         collection: &str,
         path: &Path,
     ) -> Result<(EncryptedEnvelope, Vec<u8>)> {
-        let raw = fs::read_to_string(path)?;
+        let raw = read_string_with_retry(path)?;
         let env: EncryptedEnvelope = serde_json::from_str(&raw)
             .with_context(|| format!("Invalid envelope JSON in {path:?}"))?;
         validate_record_id(&env.id)?;
