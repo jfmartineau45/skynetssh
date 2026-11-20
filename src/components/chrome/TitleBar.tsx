@@ -21,6 +21,7 @@ import {
   Columns2,
   Rows2,
   Pin,
+  Droplets,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -47,6 +48,9 @@ export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
     broadcastEnabled,
     broadcastPaneIds,
     toggleBroadcastMode,
+    bloodRain,
+    toggleBloodRain,
+    setSkynetTakeoverActive,
   } = useWorkspaceStore();
 
   const {
@@ -83,6 +87,10 @@ export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
   const vaultBtnRef = useRef<HTMLButtonElement>(null);
 
   const [alwaysOnTop, setAlwaysOnTop] = useState(false);
+  const eyeClicksRef = useRef<{ count: number; lastAt: number }>({
+    count: 0,
+    lastAt: 0,
+  });
   const [tabCtxMenu, setTabCtxMenu] = useState<{
     tabId: string;
     top: number;
@@ -194,14 +202,28 @@ export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
         data-tauri-drag-region
         className="flex items-center h-full min-w-0 flex-1 overflow-hidden"
       >
-        {/* Brand Badge */}
+        {/* Brand Badge (5-click red Skynet eye = secret T-800 Easter Egg trigger!) */}
         <div
           data-tauri-drag-region
           className="flex items-center gap-2 px-3 h-full border-r border-[var(--border-subtle)] shrink-0"
         >
-          <div className="relative flex items-center justify-center w-5 h-5 rounded bg-[var(--accent-glow)] border border-[var(--border-accent)]">
+          <button
+            type="button"
+            onClick={() => {
+              const now = Date.now();
+              const prev = eyeClicksRef.current;
+              const nextCount = now - prev.lastAt < 800 ? prev.count + 1 : 1;
+              eyeClicksRef.current = { count: nextCount, lastAt: now };
+              if (nextCount >= 5) {
+                eyeClicksRef.current = { count: 0, lastAt: 0 };
+                setSkynetTakeoverActive(true);
+              }
+            }}
+            title="Cyberdyne Optical Core"
+            className="relative flex items-center justify-center w-5 h-5 rounded bg-[var(--accent-glow)] border border-[var(--border-accent)] cursor-pointer"
+          >
             <div className="w-2 h-2 rounded-full bg-[var(--accent-primary)] shadow-[0_0_8px_var(--accent-primary)]" />
-          </div>
+          </button>
           <span
             data-tauri-drag-region
             className="text-xs font-bold tracking-[0.18em] uppercase text-[var(--text-primary)]"
@@ -592,8 +614,21 @@ export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
         </div>
       </div>
 
-      {/* Right: Broadcast Toggle, Ctrl+K Launcher, Vault Lock & Window Controls */}
+      {/* Right: Blood Rain, Broadcast Toggle, Command Palette, Vault Lock & Window Controls */}
       <div className="flex items-center h-full shrink-0 gap-1.5 pr-1">
+        <button
+          onClick={toggleBloodRain}
+          className={`flex items-center gap-1 h-6 px-2 rounded text-[11px] font-medium transition ${
+            bloodRain
+              ? "bg-red-600/25 text-red-300 border border-red-500/55 shadow-[0_0_10px_rgba(239,68,68,0.3)]"
+              : "text-[var(--text-secondary)] hover:text-red-300 hover:bg-red-500/10"
+          }`}
+          title="Toggle Cyberdyne Blood Rain Mode"
+        >
+          <Droplets className="w-3.5 h-3.5" />
+          <span className="hidden lg:inline">Blood Rain</span>
+        </button>
+
         <button
           onClick={toggleBroadcastMode}
           className={`flex items-center gap-1.5 h-6 px-2.5 rounded text-[11px] font-medium transition ${

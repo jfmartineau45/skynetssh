@@ -9,6 +9,8 @@ import {
   Palette,
   CornerDownLeft,
   Columns2,
+  Droplets,
+  Cpu,
 } from "lucide-react";
 import { useWorkspaceStore, collectPanes } from "../../store/useWorkspaceStore";
 import { useVaultStore } from "../../store/useVaultStore";
@@ -38,6 +40,9 @@ export const CommandPalette: React.FC = () => {
     activeTabId,
     runSnippetOnPane,
     showSnippetsSection,
+    bloodRain,
+    toggleBloodRain,
+    setSkynetTakeoverActive,
     setTheme,
   } = useWorkspaceStore();
 
@@ -168,6 +173,24 @@ export const CommandPalette: React.FC = () => {
       }
     }
 
+    list.push({
+      id: "fx-blood-rain",
+      category: "Cyberdyne FX",
+      title: `${bloodRain ? "Disable" : "Enable"} Blood Rain Mode`,
+      subtitle: "Crimson Cyberdyne plasma rain & telemetry glyphs",
+      icon: <Droplets className="w-4 h-4 text-red-400" />,
+      run: () => toggleBloodRain(),
+    });
+
+    list.push({
+      id: "fx-skynet-takeover",
+      category: "Easter Egg",
+      title: "Summon Skynet T-800 Patrol (15m Idle Easter Egg)",
+      subtitle: "Preview the autonomous Terminator HUD & peeking Endoskeletons",
+      icon: <Cpu className="w-4 h-4 text-red-500" />,
+      run: () => setSkynetTakeoverActive(true),
+    });
+
     for (const theme of Object.values(APP_THEMES)) {
       list.push({
         id: `theme-${theme.id}`,
@@ -203,6 +226,9 @@ export const CommandPalette: React.FC = () => {
     refreshTunnels,
     runSnippetOnPane,
     showSnippetsSection,
+    bloodRain,
+    toggleBloodRain,
+    setSkynetTakeoverActive,
     setTheme,
   ]);
 

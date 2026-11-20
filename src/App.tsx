@@ -4,6 +4,7 @@ import { TitleBar } from "./components/chrome/TitleBar";
 import { CommandPalette } from "./components/chrome/CommandPalette";
 import { HostKeyModal } from "./components/chrome/HostKeyModal";
 import { SnippetPromptModal } from "./components/chrome/SnippetPromptModal";
+import { SkynetEffectsOverlay } from "./components/chrome/SkynetEffectsOverlay";
 import { VaultUnlockModal } from "./components/vault/VaultUnlockModal";
 import { VaultDashboard } from "./components/vault/VaultDashboard";
 import { SessionTabView } from "./components/terminal/SessionTabView";
@@ -211,6 +212,7 @@ export const App: React.FC = () => {
         })}
       </div>
 
+      <SkynetEffectsOverlay />
       <VaultUnlockModal />
       <HostKeyModal />
       <SnippetPromptModal />

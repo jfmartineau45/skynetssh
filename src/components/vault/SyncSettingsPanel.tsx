@@ -63,6 +63,10 @@ export const SyncSettingsPanel: React.FC = () => {
     setShowSnippetsSection,
     inlineHashSnippets,
     setInlineHashSnippets,
+    bloodRain,
+    setBloodRain,
+    idleEasterEggEnabled,
+    setIdleEasterEggEnabled,
     terminalFontSize,
     adjustFontSize,
   } = useWorkspaceStore();
@@ -626,6 +630,28 @@ export const SyncSettingsPanel: React.FC = () => {
                 type="checkbox"
                 checked={inlineHashSnippets}
                 onChange={(e) => setInlineHashSnippets(e.target.checked)}
+                className="accent-[var(--accent-primary)]"
+              />
+            </label>
+            <label className="flex items-center justify-between cursor-pointer">
+              <span className="text-red-300 font-medium">
+                Cyberdyne Blood Rain Mode
+              </span>
+              <input
+                type="checkbox"
+                checked={bloodRain}
+                onChange={(e) => setBloodRain(e.target.checked)}
+                className="accent-[var(--accent-primary)]"
+              />
+            </label>
+            <label className="flex items-center justify-between cursor-pointer">
+              <span>
+                15-Minute Idle T-800 / Skynet Patrol Easter Egg
+              </span>
+              <input
+                type="checkbox"
+                checked={idleEasterEggEnabled}
+                onChange={(e) => setIdleEasterEggEnabled(e.target.checked)}
                 className="accent-[var(--accent-primary)]"
               />
             </label>

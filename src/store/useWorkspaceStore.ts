@@ -119,6 +119,13 @@ interface WorkspaceState {
   setShowSnippetsSection: (val: boolean) => void;
   inlineHashSnippets: boolean;
   setInlineHashSnippets: (val: boolean) => void;
+  bloodRain: boolean;
+  setBloodRain: (val: boolean) => void;
+  toggleBloodRain: () => void;
+  idleEasterEggEnabled: boolean;
+  setIdleEasterEggEnabled: (val: boolean) => void;
+  skynetTakeoverActive: boolean;
+  setSkynetTakeoverActive: (val: boolean) => void;
 
   tabs: WorkspaceTab[];
   activeTabId: string;
@@ -251,6 +258,28 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     );
     set({ inlineHashSnippets });
   },
+  bloodRain: localStorage.getItem("skynet_blood_rain") === "true",
+  setBloodRain: (bloodRain) => {
+    localStorage.setItem("skynet_blood_rain", String(bloodRain));
+    set({ bloodRain });
+  },
+  toggleBloodRain: () => {
+    const next = !get().bloodRain;
+    localStorage.setItem("skynet_blood_rain", String(next));
+    set({ bloodRain: next });
+  },
+  idleEasterEggEnabled:
+    localStorage.getItem("skynet_idle_easter_egg") !== "false",
+  setIdleEasterEggEnabled: (idleEasterEggEnabled) => {
+    localStorage.setItem(
+      "skynet_idle_easter_egg",
+      String(idleEasterEggEnabled)
+    );
+    set({ idleEasterEggEnabled });
+  },
+  skynetTakeoverActive: false,
+  setSkynetTakeoverActive: (skynetTakeoverActive) =>
+    set({ skynetTakeoverActive }),
 
   tabs: [{ id: "vault", kind: "vault", title: "Vault", pinned: true }],
   activeTabId: "vault",
