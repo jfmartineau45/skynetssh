@@ -16,9 +16,12 @@ import {
   Radio,
   Terminal as TerminalIcon,
   Server,
+  ExternalLink,
+  PanelTop,
+  Zap,
 } from "lucide-react";
 import type { TerminalPaneConfig } from "../../types/models";
-import { useWorkspaceStore } from "../../store/useWorkspaceStore";
+import { useWorkspaceStore, collectPanes } from "../../store/useWorkspaceStore";
 import { useVaultStore } from "../../store/useVaultStore";
 import { APP_THEMES } from "../../lib/themes";
 import {
@@ -44,11 +47,15 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
     copyOnSelect,
     rightClickPaste,
     showSnippetsSection,
+    tabs,
     shells,
     setActiveTab,
     setActivePane,
     updatePane,
     splitPane,
+    dockTabIntoSplit,
+    detachPaneToTab,
+    popoutPaneToWindow,
     closePane,
     toggleSftpDrawer,
     broadcastEnabled,
@@ -405,6 +412,15 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connectNonce]);
 
+  const currentTab = tabs.find((t) => t.id === tabId);
+  const siblingPaneCount =
+    currentTab && currentTab.kind === "terminal"
+      ? collectPanes(currentTab.rootNode).length
+      : 1;
+  const otherOpenTerminalTabs = tabs.filter(
+    (t) => t.kind === "terminal" && t.id !== tabId
+  );
+
   const handleSplitDuplicate = (direction: "horizontal" | "vertical") => {
     setSplitPicker(null);
     if (pane.kind === "ssh" && pane.hostId) {
@@ -412,6 +428,8 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
         kind: "ssh",
         title: pane.title,
         hostId: pane.hostId,
+        vaultKind: pane.vaultKind,
+        vaultName: pane.vaultName,
       });
     } else {
       const profile = pane.shellProfile ?? shells[0];
@@ -428,6 +446,11 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
     direction: "horizontal" | "vertical"
   ) => {
     e.stopPropagation();
+    // Shift+Click splits the current session immediately in 1 click!
+    if (e.shiftKey) {
+      handleSplitDuplicate(direction);
+      return;
+    }
     const r = e.currentTarget.getBoundingClientRect();
     setSplitFilter("");
     setSplitPicker((prev) =>
@@ -436,7 +459,7 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
         : {
             direction,
             top: r.bottom + 4,
-            left: Math.max(8, Math.min(r.right - 240, window.innerWidth - 248)),
+            left: Math.max(8, Math.min(r.right - 268, window.innerWidth - 276)),
           }
     );
   };
@@ -555,17 +578,41 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
           <button
             onClick={(e) => openSplitMenu(e, "horizontal")}
             className="p-1 rounded text-[var(--text-secondary)] hover:text-white hover:bg-white/10 transition"
-            title="Split Right (pick server or local shell)"
+            title="Split Right — pick open tab, same host, or Vault server (Shift+Click = instant split)"
           >
             <Columns2 className="w-3 h-3" />
           </button>
           <button
             onClick={(e) => openSplitMenu(e, "vertical")}
             className="p-1 rounded text-[var(--text-secondary)] hover:text-white hover:bg-white/10 transition"
-            title="Split Down (pick server or local shell)"
+            title="Split Down — pick open tab, same host, or Vault server (Shift+Click = instant split)"
           >
             <Rows2 className="w-3 h-3" />
           </button>
+          {siblingPaneCount > 1 && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                detachPaneToTab(tabId, pane.id);
+              }}
+              className="p-1 rounded text-sky-300 hover:bg-sky-500/15 transition"
+              title="Un-split this pane out into its own Tab"
+            >
+              <PanelTop className="w-3 h-3" />
+            </button>
+          )}
+          {isTauriRuntime() && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                void popoutPaneToWindow(tabId, pane.id);
+              }}
+              className="p-1 rounded text-[var(--text-secondary)] hover:text-sky-300 hover:bg-sky-500/15 transition"
+              title="Pop out terminal into its own standalone OS window"
+            >
+              <ExternalLink className="w-3 h-3" />
+            </button>
+          )}
           <button
             onClick={() => setConnectNonce((n) => n + 1)}
             className="p-1 rounded text-[var(--text-secondary)] hover:text-white hover:bg-white/10 transition"
@@ -767,38 +814,85 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
         );
       })()}
 
-      {/* Split Target Picker (Choose any Saved SSH Host or Local Shell!) */}
+      {/* Split Target Picker (Same Session, Already-Open Tabs, Saved SSH Hosts, or Local Shells!) */}
       {splitPicker && (
         <div
           ref={splitMenuRef}
           style={{ top: splitPicker.top, left: splitPicker.left }}
-          className="fixed w-60 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-accent)] shadow-2xl py-1.5 z-50 text-xs"
+          className="fixed w-68 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-accent)] shadow-2xl py-1.5 z-50 text-xs"
         >
-          <div className="px-2.5 pb-1.5 border-b border-[var(--border-subtle)]">
-            <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] mb-1">
+          <div className="px-2.5 pb-1.5 border-b border-[var(--border-subtle)] space-y-1.5">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
               Split {splitPicker.direction === "horizontal" ? "Right" : "Down"} With...
             </div>
+
+            {/* #1 Prominent Action: Split Current Open Session! */}
+            <button
+              onClick={() => handleSplitDuplicate(splitPicker.direction)}
+              className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-[var(--accent-glow)] hover:bg-[var(--accent-primary)] border border-[var(--border-accent)] text-white font-semibold transition"
+            >
+              <span className="flex items-center gap-1.5 truncate">
+                <Zap className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">Split Current: {pane.title}</span>
+              </span>
+              <span className="text-[9px] font-mono opacity-80 shrink-0">↵</span>
+            </button>
+
             <input
               autoFocus
               value={splitFilter}
               onChange={(e) => setSplitFilter(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Escape") setSplitPicker(null);
+                else if (e.key === "Enter" && !splitFilter.trim()) {
+                  handleSplitDuplicate(splitPicker.direction);
+                }
               }}
-              placeholder="Filter hosts or shells..."
+              placeholder="Or search open tabs / hosts..."
               className="w-full px-2 py-1 rounded bg-black/40 border border-[var(--border-subtle)] text-xs text-white focus:outline-none focus:border-[var(--border-accent)]"
             />
           </div>
 
-          <div className="max-h-64 overflow-y-auto py-1">
-            {!splitFilter.trim() && (
-              <button
-                onClick={() => handleSplitDuplicate(splitPicker.direction)}
-                className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-[var(--bg-hover)] text-[var(--text-primary)] font-medium"
-              >
-                <RotateCw className="w-3.5 h-3.5 text-[var(--accent-primary)] shrink-0" />
-                <span className="truncate">Duplicate: {pane.title}</span>
-              </button>
+          <div className="max-h-68 overflow-y-auto py-1">
+            {/* Dock Already-Open Tabs Side-by-Side! */}
+            {otherOpenTerminalTabs.filter((t) =>
+              t.title.toLowerCase().includes(splitFilter.toLowerCase())
+            ).length > 0 && (
+              <>
+                <div className="px-3 pt-1.5 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-300">
+                  Already Open Tabs (Dock Here)
+                </div>
+                {otherOpenTerminalTabs
+                  .filter((t) =>
+                    t.title.toLowerCase().includes(splitFilter.toLowerCase())
+                  )
+                  .map((t) => (
+                    <button
+                      key={t.id}
+                      onClick={() => {
+                        dockTabIntoSplit(
+                          t.id,
+                          tabId,
+                          pane.id,
+                          splitPicker.direction
+                        );
+                        setSplitPicker(null);
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-[var(--bg-hover)] text-[var(--text-primary)]"
+                    >
+                      <Columns2 className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                      <div className="min-w-0">
+                        <div className="truncate font-medium">{t.title}</div>
+                        {t.kind === "terminal" && t.subtitle && (
+                          <div className="truncate text-[10px] text-[var(--text-muted)] font-mono">
+                            {t.subtitle}
+                          </div>
+                        )}
+                      </div>
+                    </button>
+                  ))}
+                <div className="my-1 border-t border-[var(--border-subtle)]" />
+              </>
             )}
 
             {hosts.filter(

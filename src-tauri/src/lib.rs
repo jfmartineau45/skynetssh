@@ -765,6 +765,59 @@ async fn tunnel_stop(tunnel_id: String, state: State<'_, AppState>) -> CmdResult
     state.tunnels.stop(&tunnel_id).await.map_err(err_str)
 }
 
+fn percent_encode_param(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+#[tauri::command]
+fn window_popout_terminal(
+    kind: String,
+    host_id: Option<String>,
+    shell_id: Option<String>,
+    title: String,
+    vault_kind: Option<String>,
+    vault_name: Option<String>,
+    app: AppHandle,
+) -> CmdResult<String> {
+    let label = format!("popout-{}", uuid::Uuid::new_v4().simple());
+    let url = format!(
+        "index.html?popout=1&kind={}&hostId={}&shellId={}&title={}&vaultKind={}&vaultName={}",
+        percent_encode_param(&kind),
+        percent_encode_param(host_id.as_deref().unwrap_or("")),
+        percent_encode_param(shell_id.as_deref().unwrap_or("")),
+        percent_encode_param(&title),
+        percent_encode_param(vault_kind.as_deref().unwrap_or("personal")),
+        percent_encode_param(vault_name.as_deref().unwrap_or("Personal Vault")),
+    );
+
+    let win = tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App(url.into()))
+        .title(format!("SkynetSSH — {title}"))
+        .inner_size(1040.0, 680.0)
+        .min_inner_size(520.0, 340.0)
+        .decorations(false)
+        .transparent(true)
+        .center()
+        .build()
+        .map_err(err_str)?;
+
+    #[cfg(target_os = "windows")]
+    {
+        if window_vibrancy::apply_mica(&win, Some(true)).is_err() {
+            let _ = window_vibrancy::apply_acrylic(&win, Some((10, 12, 18, 220)));
+        }
+    }
+
+    Ok(label)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     sftp::cleanup_temp_edits();
@@ -893,6 +946,7 @@ pub fn run() {
             tunnel_list_active,
             tunnel_start,
             tunnel_stop,
+            window_popout_terminal,
         ])
         .run(tauri::generate_context!())
         .expect("error while running SkynetSSH");

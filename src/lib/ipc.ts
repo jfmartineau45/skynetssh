@@ -287,3 +287,12 @@ export const apiTunnelStart = (tunnelId: string) =>
 
 export const apiTunnelStop = (tunnelId: string) =>
   invoke<void>("tunnel_stop", { tunnelId });
+
+export const apiPopoutTerminalWindow = (params: {
+  kind: "ssh" | "local";
+  hostId?: string | null;
+  shellId?: string | null;
+  title: string;
+  vaultKind?: string | null;
+  vaultName?: string | null;
+}) => invoke<string>("window_popout_terminal", params);

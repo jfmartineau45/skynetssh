@@ -9,7 +9,13 @@ import type {
   TransferProgressEvent,
   WorkspaceTab,
 } from "../types/models";
-import { apiPtyWrite, apiSshWrite } from "../lib/ipc";
+import {
+  apiPopoutTerminalWindow,
+  apiPtyWrite,
+  apiSshWrite,
+  isTauriRuntime,
+} from "../lib/ipc";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { extractSnippetVariables } from "../lib/snippets";
 import { useVaultStore } from "./useVaultStore";
 
@@ -130,6 +136,23 @@ interface WorkspaceState {
   openHostTerminal: (host: HostRecord) => void;
   openLocalTerminal: (shell: ShellProfile) => void;
   openDualSftpTab: (hostId?: string) => void;
+  initPopoutWorkspace: (params: {
+    kind: "ssh" | "local";
+    hostId?: string;
+    shellProfile?: ShellProfile;
+    title: string;
+    vaultKind?: "personal" | "team";
+    vaultName?: string;
+  }) => void;
+  dockTabIntoSplit: (
+    sourceTabId: string,
+    targetTabId: string,
+    targetPaneId: string,
+    direction: "horizontal" | "vertical"
+  ) => void;
+  detachPaneToTab: (tabId: string, paneId: string) => void;
+  popoutPaneToWindow: (tabId: string, paneId: string) => Promise<void>;
+  popoutTabToWindow: (tabId: string) => Promise<void>;
 
   splitPane: (
     tabId: string,
@@ -243,11 +266,21 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   closeTab: (id) => {
     if (id === "vault") return;
+    const isPopout =
+      typeof window !== "undefined" &&
+      new URLSearchParams(window.location.search).get("popout") === "1";
+    const remainingCount = get().tabs.filter((t) => t.id !== id).length;
+    if (isPopout && remainingCount === 0) {
+      if (isTauriRuntime()) {
+        void getCurrentWindow().close();
+      }
+      return;
+    }
     set((state) => {
       const idx = state.tabs.findIndex((t) => t.id === id);
       const nextTabs = state.tabs.filter((t) => t.id !== id);
       let nextActive = state.activeTabId;
-      if (state.activeTabId === id) {
+      if (state.activeTabId === id && nextTabs.length > 0) {
         const fallback = nextTabs[Math.max(0, idx - 1)] ?? nextTabs[0];
         nextActive = fallback.id;
       }
@@ -322,6 +355,148 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       rightTarget: hostId ? { type: "remote", hostId } : { type: "local" },
     };
     set((s) => ({ tabs: [...s.tabs, newTab], activeTabId: tabId }));
+  },
+
+  initPopoutWorkspace: ({
+    kind,
+    hostId,
+    shellProfile,
+    title,
+    vaultKind,
+    vaultName,
+  }) => {
+    const paneId = uid();
+    const tabId = uid();
+    const pane: TerminalPaneConfig = {
+      id: paneId,
+      kind,
+      title,
+      hostId,
+      shellProfile,
+      vaultKind: vaultKind ?? "personal",
+      vaultName: vaultName ?? "Personal Vault",
+      connected: false,
+      connecting: true,
+    };
+    const popTab: WorkspaceTab = {
+      id: tabId,
+      kind: "terminal",
+      title,
+      vaultKind: vaultKind ?? "personal",
+      vaultName: vaultName ?? "Personal Vault",
+      rootNode: { type: "leaf", id: uid(), pane },
+      activePaneId: paneId,
+      sftpDrawerOpen: false,
+      sftpDrawerHostId: hostId,
+    };
+    set({ tabs: [popTab], activeTabId: tabId });
+  },
+
+  dockTabIntoSplit: (sourceTabId, targetTabId, targetPaneId, direction) => {
+    if (sourceTabId === targetTabId) return;
+    const state = get();
+    const srcTab = state.tabs.find((t) => t.id === sourceTabId);
+    const dstTab = state.tabs.find((t) => t.id === targetTabId);
+    if (
+      !srcTab ||
+      srcTab.kind !== "terminal" ||
+      !dstTab ||
+      dstTab.kind !== "terminal"
+    ) {
+      return;
+    }
+    const srcPanes = collectPanes(srcTab.rootNode);
+    let anchorPaneId = targetPaneId;
+    for (const sp of srcPanes) {
+      get().splitPane(targetTabId, anchorPaneId, direction, {
+        kind: sp.kind,
+        title: sp.title,
+        hostId: sp.hostId,
+        shellProfile: sp.shellProfile,
+        vaultKind: sp.vaultKind,
+        vaultName: sp.vaultName,
+      });
+      const updatedDst = get().tabs.find((t) => t.id === targetTabId);
+      if (updatedDst && updatedDst.kind === "terminal") {
+        anchorPaneId = updatedDst.activePaneId;
+      }
+    }
+    set({ activeTabId: targetTabId });
+    get().closeTab(sourceTabId);
+  },
+
+  detachPaneToTab: (tabId, paneId) => {
+    const state = get();
+    const tab = state.tabs.find((t) => t.id === tabId);
+    if (!tab || tab.kind !== "terminal") return;
+    const panes = collectPanes(tab.rootNode);
+    if (panes.length <= 1) return;
+    const pane = panes.find((p) => p.id === paneId);
+    if (!pane) return;
+
+    const newPaneId = uid();
+    const newTabId = uid();
+    const newPane: TerminalPaneConfig = {
+      id: newPaneId,
+      kind: pane.kind,
+      title: pane.title,
+      hostId: pane.hostId,
+      shellProfile: pane.shellProfile,
+      vaultKind: pane.vaultKind,
+      vaultName: pane.vaultName,
+      connected: false,
+      connecting: true,
+    };
+    const newTab: WorkspaceTab = {
+      id: newTabId,
+      kind: "terminal",
+      title: pane.title,
+      vaultKind: pane.vaultKind,
+      vaultName: pane.vaultName,
+      rootNode: { type: "leaf", id: uid(), pane: newPane },
+      activePaneId: newPaneId,
+      sftpDrawerOpen: false,
+      sftpDrawerHostId: pane.hostId,
+    };
+
+    get().closePane(tabId, paneId);
+    set((s) => ({ tabs: [...s.tabs, newTab], activeTabId: newTabId }));
+  },
+
+  popoutPaneToWindow: async (tabId, paneId) => {
+    const state = get();
+    const tab = state.tabs.find((t) => t.id === tabId);
+    if (!tab || tab.kind !== "terminal") return;
+    const pane = collectPanes(tab.rootNode).find((p) => p.id === paneId);
+    if (!pane || !isTauriRuntime()) return;
+
+    await apiPopoutTerminalWindow({
+      kind: pane.kind,
+      hostId: pane.hostId ?? null,
+      shellId: pane.shellProfile?.id ?? null,
+      title: pane.title,
+      vaultKind: pane.vaultKind ?? null,
+      vaultName: pane.vaultName ?? null,
+    });
+    get().closePane(tabId, paneId);
+  },
+
+  popoutTabToWindow: async (tabId) => {
+    const state = get();
+    const tab = state.tabs.find((t) => t.id === tabId);
+    if (!tab || tab.kind !== "terminal" || !isTauriRuntime()) return;
+    const panes = collectPanes(tab.rootNode);
+    for (const pane of panes) {
+      await apiPopoutTerminalWindow({
+        kind: pane.kind,
+        hostId: pane.hostId ?? null,
+        shellId: pane.shellProfile?.id ?? null,
+        title: pane.title,
+        vaultKind: pane.vaultKind ?? null,
+        vaultName: pane.vaultName ?? null,
+      });
+    }
+    get().closeTab(tabId);
   },
 
   splitPane: (tabId, targetPaneId, direction, partialPane) => {

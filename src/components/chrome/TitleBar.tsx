@@ -17,20 +17,28 @@ import {
   User,
   Check,
   FolderOpen,
+  ExternalLink,
+  Columns2,
+  Rows2,
+  Pin,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
-import { useWorkspaceStore } from "../../store/useWorkspaceStore";
+import { useWorkspaceStore, collectPanes } from "../../store/useWorkspaceStore";
 import { useVaultStore } from "../../store/useVaultStore";
 import { isTauriRuntime } from "../../lib/ipc";
 import { parseSshConnectionString } from "../../lib/sshParser";
 
-export const TitleBar: React.FC = () => {
+export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
+  isPopout = false,
+}) => {
   const {
     tabs,
     activeTabId,
     setActiveTab,
     closeTab,
+    dockTabIntoSplit,
+    popoutTabToWindow,
     shells,
     openHostTerminal,
     openLocalTerminal,
@@ -74,6 +82,14 @@ export const TitleBar: React.FC = () => {
   const vaultMenuRef = useRef<HTMLDivElement>(null);
   const vaultBtnRef = useRef<HTMLButtonElement>(null);
 
+  const [alwaysOnTop, setAlwaysOnTop] = useState(false);
+  const [tabCtxMenu, setTabCtxMenu] = useState<{
+    tabId: string;
+    top: number;
+    left: number;
+  } | null>(null);
+  const tabCtxRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
@@ -84,6 +100,12 @@ export const TitleBar: React.FC = () => {
         !vaultMenuRef.current.contains(e.target as Node)
       ) {
         setVaultMenuOpen(false);
+      }
+      if (
+        tabCtxRef.current &&
+        !tabCtxRef.current.contains(e.target as Node)
+      ) {
+        setTabCtxMenu(null);
       }
     };
     window.addEventListener("mousedown", onClick);
@@ -189,6 +211,7 @@ export const TitleBar: React.FC = () => {
         </div>
 
         {/* High-Visibility Personal vs Team Vault Indicator & Switcher */}
+        {!isPopout && (
         <div className="px-1.5 border-r border-[var(--border-subtle)] h-full flex items-center shrink-0" ref={vaultMenuRef}>
           <button
             ref={vaultBtnRef}
@@ -344,6 +367,7 @@ export const TitleBar: React.FC = () => {
             </div>
           )}
         </div>
+        )}
 
         {/* Workspace Tabs */}
         <div className="flex items-center h-full px-1.5 gap-1 overflow-x-auto no-scrollbar">
@@ -353,6 +377,16 @@ export const TitleBar: React.FC = () => {
               <div
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
+                onContextMenu={(e) => {
+                  if (tab.kind === "terminal") {
+                    e.preventDefault();
+                    setTabCtxMenu({
+                      tabId: tab.id,
+                      top: e.clientY + 4,
+                      left: Math.min(e.clientX, window.innerWidth - 230),
+                    });
+                  }
+                }}
                 onAuxClick={(e) => {
                   if (e.button === 1 && tab.kind !== "vault") closeTab(tab.id);
                 }}
@@ -385,6 +419,19 @@ export const TitleBar: React.FC = () => {
                 )}
 
                 <span className="max-w-[140px] truncate">{tab.title}</span>
+
+                {tab.kind === "terminal" && isTauriRuntime() && !isPopout && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void popoutTabToWindow(tab.id);
+                    }}
+                    className="p-0.5 rounded opacity-0 group-hover:opacity-80 hover:!opacity-100 hover:bg-sky-500/20 text-sky-300 transition"
+                    title="Pop out tab into standalone window (Right-click tab for Split options)"
+                  >
+                    <ExternalLink className="w-3 h-3" />
+                  </button>
+                )}
 
                 {tab.kind !== "vault" && (
                   <button
@@ -576,7 +623,26 @@ export const TitleBar: React.FC = () => {
           </kbd>
         </button>
 
-        {status?.unlocked && (
+        {isPopout && isTauriRuntime() && (
+          <button
+            onClick={async () => {
+              const next = !alwaysOnTop;
+              setAlwaysOnTop(next);
+              await getCurrentWindow().setAlwaysOnTop(next);
+            }}
+            className={`flex items-center gap-1 h-6 px-2 rounded text-[11px] font-medium transition ${
+              alwaysOnTop
+                ? "bg-sky-500/25 text-sky-200 border border-sky-400/50"
+                : "text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-hover)]"
+            }`}
+            title="Pin popped-out terminal window Always on Top"
+          >
+            <Pin className="w-3 h-3" />
+            <span>{alwaysOnTop ? "Pinned" : "Pin Top"}</span>
+          </button>
+        )}
+
+        {!isPopout && status?.unlocked && (
           <button
             onClick={() => lockVault()}
             className="flex items-center justify-center w-6 h-6 rounded text-[var(--text-secondary)] hover:text-[var(--accent-primary)] hover:bg-[var(--bg-hover)] transition"
@@ -610,6 +676,130 @@ export const TitleBar: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Right-Click Tab Context Menu (Split Into Current View / Pop Out Window) */}
+      {tabCtxMenu && (() => {
+        const ctxTab = tabs.find((t) => t.id === tabCtxMenu.tabId);
+        const curActiveTab = tabs.find((t) => t.id === activeTabId);
+        if (!ctxTab || ctxTab.kind !== "terminal") return null;
+
+        const canDockIntoActive =
+          curActiveTab &&
+          curActiveTab.kind === "terminal" &&
+          curActiveTab.id !== ctxTab.id;
+        const otherTermTabs = tabs.filter(
+          (t) => t.kind === "terminal" && t.id !== ctxTab.id
+        );
+
+        return (
+          <div
+            ref={tabCtxRef}
+            style={{ top: tabCtxMenu.top, left: tabCtxMenu.left }}
+            className="fixed w-56 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-accent)] shadow-2xl py-1.5 z-50 text-xs"
+          >
+            <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] truncate">
+              Tab: {ctxTab.title}
+            </div>
+
+            {canDockIntoActive && curActiveTab.kind === "terminal" && (
+              <>
+                <button
+                  onClick={() => {
+                    dockTabIntoSplit(
+                      ctxTab.id,
+                      curActiveTab.id,
+                      curActiveTab.activePaneId,
+                      "horizontal"
+                    );
+                    setTabCtxMenu(null);
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-[var(--bg-hover)] text-[var(--text-primary)]"
+                >
+                  <Columns2 className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                  <span className="truncate">
+                    Split Right with {curActiveTab.title}
+                  </span>
+                </button>
+                <button
+                  onClick={() => {
+                    dockTabIntoSplit(
+                      ctxTab.id,
+                      curActiveTab.id,
+                      curActiveTab.activePaneId,
+                      "vertical"
+                    );
+                    setTabCtxMenu(null);
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-[var(--bg-hover)] text-[var(--text-primary)]"
+                >
+                  <Rows2 className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                  <span className="truncate">
+                    Split Down with {curActiveTab.title}
+                  </span>
+                </button>
+              </>
+            )}
+
+            {!canDockIntoActive && otherTermTabs.length > 0 && (
+              <>
+                {otherTermTabs.slice(0, 4).map((ot) => {
+                  if (ot.kind !== "terminal") return null;
+                  const anchor =
+                    collectPanes(ot.rootNode).find(
+                      (p) => p.id === ot.activePaneId
+                    ) ?? collectPanes(ot.rootNode)[0];
+                  if (!anchor) return null;
+                  return (
+                    <button
+                      key={ot.id}
+                      onClick={() => {
+                        dockTabIntoSplit(
+                          ot.id,
+                          ctxTab.id,
+                          ctxTab.activePaneId,
+                          "horizontal"
+                        );
+                        setTabCtxMenu(null);
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-[var(--bg-hover)] text-[var(--text-primary)]"
+                    >
+                      <Columns2 className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                      <span className="truncate">
+                        Dock {ot.title} Beside This
+                      </span>
+                    </button>
+                  );
+                })}
+              </>
+            )}
+
+            {isTauriRuntime() && (
+              <button
+                onClick={() => {
+                  setTabCtxMenu(null);
+                  void popoutTabToWindow(ctxTab.id);
+                }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-[var(--bg-hover)] text-sky-300 font-medium"
+              >
+                <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+                <span>Pop Out into New Window</span>
+              </button>
+            )}
+
+            <div className="my-1 border-t border-[var(--border-subtle)]" />
+            <button
+              onClick={() => {
+                setTabCtxMenu(null);
+                closeTab(ctxTab.id);
+              }}
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-red-500/20 text-red-400"
+            >
+              <X className="w-3.5 h-3.5 shrink-0" />
+              <span>Close Tab</span>
+            </button>
+          </div>
+        );
+      })()}
     </header>
   );
 };

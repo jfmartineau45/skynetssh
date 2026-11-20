@@ -520,7 +520,7 @@ export const SftpFilePane: React.FC<Props> = ({
       )}
 
       {/* Endpoint Selector + Navigation + Filter */}
-      <div className="p-2 border-b border-[var(--border-subtle)] bg-[var(--bg-panel)] space-y-1.5 shrink-0">
+      <div className="p-2.5 border-b border-[var(--border-subtle)] bg-[var(--bg-panel)] space-y-1.5 shrink-0 overflow-hidden">
         {onChangeTarget && (
           <div className="flex items-center gap-2">
             {target.type === "local" ? (
@@ -760,7 +760,7 @@ export const SftpFilePane: React.FC<Props> = ({
           {!compact && <span className="w-20 text-right">Perms</span>}
           <button
             onClick={() => handleSortClick("modified")}
-            className={`w-24 flex items-center justify-end gap-1 hover:text-white transition ${
+            className={`w-28 whitespace-nowrap flex items-center justify-end gap-1 hover:text-white transition ${
               sortKey === "modified" ? "text-emerald-300" : ""
             }`}
           >
@@ -847,7 +847,7 @@ export const SftpFilePane: React.FC<Props> = ({
                   )}
 
                   <span
-                    className={`font-mono text-[11px] w-24 text-right ${
+                    className={`font-mono text-[11px] w-28 whitespace-nowrap text-right ${
                       mod.freshLevel === "hot"
                         ? "text-emerald-300 font-semibold"
                         : mod.freshLevel === "warm"

@@ -55,15 +55,28 @@ export function formatModifiedDisplay(
     };
   }
 
+  const MONTHS = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+  ];
   const sameYear = date.getFullYear() === new Date(nowMs).getFullYear();
+  const hh = String(date.getHours()).padStart(2, "0");
+  const mm = String(date.getMinutes()).padStart(2, "0");
   const short = sameYear
-    ? date.toLocaleDateString(undefined, {
-        month: "short",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      })
-    : date.toISOString().slice(0, 10);
+    ? `${MONTHS[date.getMonth()]} ${String(date.getDate()).padStart(2, " ")} ${hh}:${mm}`
+    : `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
+        date.getDate()
+      ).padStart(2, "0")}`;
 
   return { short, full, freshLevel: "normal" };
 }

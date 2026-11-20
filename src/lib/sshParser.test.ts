@@ -51,6 +51,9 @@ test("sftpUtils formats relative modified times, quotes POSIX paths safely, and 
   assert.equal(formatModifiedDisplay(1_699_999_980, nowMs).short, "Just now");
   assert.equal(formatModifiedDisplay(1_700_000_000 - 300, nowMs).short, "5m ago");
   assert.equal(formatModifiedDisplay(1_700_000_000 - 7200, nowMs).short, "2h ago");
+  const olderSameYear = formatModifiedDisplay(1_700_000_000 - 20 * 86400, nowMs).short;
+  assert.ok(!olderSameYear.includes("p.m.") && !olderSameYear.includes("a.m."));
+  assert.ok(olderSameYear.length <= 13);
 
   const items = [
     {

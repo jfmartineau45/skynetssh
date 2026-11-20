@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useMemo } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { TitleBar } from "./components/chrome/TitleBar";
 import { CommandPalette } from "./components/chrome/CommandPalette";
@@ -23,8 +23,25 @@ export const App: React.FC = () => {
     cycleTab,
     closeTab,
     openLocalTerminal,
+    initPopoutWorkspace,
     adjustFontSize,
   } = useWorkspaceStore();
+
+  const popoutParams = useMemo(() => {
+    if (typeof window === "undefined") return null;
+    const p = new URLSearchParams(window.location.search);
+    if (p.get("popout") !== "1") return null;
+    return {
+      kind: (p.get("kind") === "local" ? "local" : "ssh") as "ssh" | "local",
+      hostId: p.get("hostId") || undefined,
+      shellId: p.get("shellId") || undefined,
+      title: p.get("title") || "Terminal",
+      vaultKind: (p.get("vaultKind") === "team" ? "team" : "personal") as
+        | "personal"
+        | "team",
+      vaultName: p.get("vaultName") || "Personal Vault",
+    };
+  }, []);
 
   const {
     refreshStatus,
@@ -50,7 +67,23 @@ export const App: React.FC = () => {
 
     refreshStatus();
     apiDiscoverShells()
-      .then(setShells)
+      .then((discovered) => {
+        setShells(discovered);
+        if (popoutParams) {
+          const matchedShell =
+            discovered.find((s) => s.id === popoutParams.shellId) ??
+            discovered[0];
+          initPopoutWorkspace({
+            kind: popoutParams.kind,
+            hostId: popoutParams.hostId,
+            shellProfile:
+              popoutParams.kind === "local" ? matchedShell : undefined,
+            title: popoutParams.title,
+            vaultKind: popoutParams.vaultKind,
+            vaultName: popoutParams.vaultName,
+          });
+        }
+      })
       .catch(() => {});
 
     const unlistenHostKey = listen<HostKeyPromptEvent>(
@@ -158,7 +191,7 @@ export const App: React.FC = () => {
 
   return (
     <div className="flex flex-col w-screen h-screen overflow-hidden bg-[var(--bg-app)] text-[var(--text-primary)] border border-[var(--border-subtle)]">
-      <TitleBar />
+      <TitleBar isPopout={Boolean(popoutParams)} />
 
       {/* Keep terminal & SFTP tabs mounted when switching tabs so xterm WebGL buffers & scrollback stay alive! */}
       <div className="relative flex-1 min-h-0 overflow-hidden">
