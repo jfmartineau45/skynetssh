@@ -274,13 +274,13 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
     term.attachCustomKeyEventHandler((ev) => {
       if (ev.type !== "keydown") return true;
 
-      // Let global app shortcuts bubble up instead of sending escape codes to shell
+      // TUI-Safe App Shortcuts: NEVER hijack bare Ctrl+<letter>, Ctrl+-/_, or bare Alt+<key>
+      // used by nano, vim, bash/readline, tmux, screen, htop, or mc!
       if (
-        (ev.ctrlKey && ev.key.toLowerCase() === "k") ||
-        (ev.ctrlKey && ev.key === "Tab") ||
-        (ev.ctrlKey && /^[1-9]$/.test(ev.key)) ||
-        (ev.ctrlKey && ["=", "+", "-", "0"].includes(ev.key)) ||
-        (ev.ctrlKey && ev.shiftKey && ["t", "w", "n"].includes(ev.key.toLowerCase()))
+        (ev.ctrlKey && ev.shiftKey && !ev.altKey && ["p", "t", "w", "n"].includes(ev.key.toLowerCase())) ||
+        (ev.ctrlKey && !ev.altKey && ev.key === "Tab") ||
+        (ev.ctrlKey && ev.altKey && /^[1-9]$/.test(ev.key)) ||
+        (ev.ctrlKey && ev.altKey && ["=", "+", "-", "0"].includes(ev.key))
       ) {
         return false;
       }
@@ -320,12 +320,14 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
         }
       }
 
-      // Inline `##` Snippet Trigger right at the live terminal cursor!
+      // Inline `##` Snippet Trigger — ONLY in normal shell buffer (auto-disabled in nano/vim/tmux/htop alternate buffer!)
       if (
         !ev.ctrlKey &&
         !ev.altKey &&
         !ev.metaKey &&
-        useWorkspaceStore.getState().showSnippetsSection
+        term.buffer.active !== term.buffer.alternate &&
+        useWorkspaceStore.getState().showSnippetsSection &&
+        useWorkspaceStore.getState().inlineHashSnippets
       ) {
         if (ev.key === "#") {
           const now = performance.now();

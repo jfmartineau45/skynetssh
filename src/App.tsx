@@ -75,18 +75,26 @@ export const App: React.FC = () => {
     };
   }, [refreshStatus, reloadSnapshot, setShells, enqueueHostKeyPrompt]);
 
-  // Global Tabby Keyboard Shortcuts
+  // Global Tabby Keyboard Shortcuts (TUI-Safe: never steals nano/vim/bash/tmux control codes!)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const insideTerminal = Boolean(target?.closest?.(".xterm"));
+
       // Ctrl+Tab / Ctrl+Shift+Tab -> Cycle Tabs
-      if (e.ctrlKey && e.key === "Tab") {
+      if (e.ctrlKey && !e.altKey && e.key === "Tab") {
         e.preventDefault();
         cycleTab(e.shiftKey ? -1 : 1);
         return;
       }
 
-      // Ctrl+1..9 -> Jump directly to Tab 1..9 (Ctrl+1 = Vault)
-      if (e.ctrlKey && !e.shiftKey && !e.altKey && /^[1-9]$/.test(e.key)) {
+      // Jump to Tab 1..9: Ctrl+Alt+1..9 anywhere (or Ctrl+1..9 outside terminal)
+      if (
+        e.ctrlKey &&
+        !e.shiftKey &&
+        (e.altKey || !insideTerminal) &&
+        /^[1-9]$/.test(e.key)
+      ) {
         const idx = parseInt(e.key, 10) - 1;
         if (tabs[idx]) {
           e.preventDefault();
@@ -95,8 +103,9 @@ export const App: React.FC = () => {
         return;
       }
 
-      // Ctrl+= / Ctrl+- / Ctrl+0 -> Zoom terminal font size
-      if (e.ctrlKey && !e.altKey) {
+      // Zoom terminal font size: Ctrl+Alt+=/−/0 inside terminal (so nano ^_ Go-To-Line & bash ^_ Undo never break!),
+      // or Ctrl+=/−/0 outside terminal
+      if (e.ctrlKey && (e.altKey || !insideTerminal) && !e.shiftKey) {
         if (e.key === "=" || e.key === "+") {
           e.preventDefault();
           adjustFontSize(1);
@@ -115,7 +124,7 @@ export const App: React.FC = () => {
       }
 
       // Ctrl+Shift+T (New Local Shell), Ctrl+Shift+W (Close Tab), Ctrl+Shift+N (New Vault Host)
-      if (e.ctrlKey && e.shiftKey) {
+      if (e.ctrlKey && e.shiftKey && !e.altKey) {
         const k = e.key.toLowerCase();
         if (k === "t" && shells[0]) {
           e.preventDefault();

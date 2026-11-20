@@ -567,12 +567,12 @@ export const TitleBar: React.FC = () => {
         <button
           onClick={() => setCommandPaletteOpen(true)}
           className="flex items-center gap-2 h-6 px-2.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] hover:border-[var(--border-accent)] text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition"
-          title="Command Palette (Ctrl+K)"
+          title="Command Palette (Ctrl+Shift+P)"
         >
           <Search className="w-3 h-3" />
           <span className="hidden md:inline">Command</span>
           <kbd className="text-[10px] px-1 rounded bg-white/5 text-[var(--text-muted)]">
-            Ctrl+K
+            Ctrl+Shift+P
           </kbd>
         </button>
 

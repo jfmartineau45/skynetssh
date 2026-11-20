@@ -66,7 +66,7 @@
 ### 7. Shared Categorized Snippets Playbook, Broadcast & Themes
 - **Team-Shared & Categorized Snippets:** Organize frequent ops commands into **Category Folders** (`Docker & Containers`, `Linux & Systemd`, `Networking & TLS`, `Disk & Performance`, or custom folders) with `#tag` filters, synced live across teammates in your **Team SharePoint / OneDrive Vault**, plus 1-click **Starter Ops Pack**, **JSON Export/Import** across Vaults, an inline **Snippets** picker on every terminal pane header, `{{variable}}` interactive prompts (preserving Docker/Go `{{.Names}}` templates), and an optional UI visibility toggle.
 - **Multi-Host Broadcast Mode:** Toggle **Broadcast** in the title bar to mirror keystrokes simultaneously across all selected panes (highlighted with amber tactical borders).
-- **Command Palette (`Ctrl+K`):** Fuzzy-search launcher to connect to hosts, open Dual-Pane SFTP, spawn local shells, toggle tunnels, run snippets, or switch themes.
+- **TUI-Safe Command Palette (`Ctrl+Shift+P`):** Fuzzy-search launcher to connect to hosts, open Dual-Pane SFTP, spawn local shells, toggle tunnels, run snippets, or switch themes—designed so bare `Ctrl+<key>` and `Alt+<key>` shortcuts never interfere with `nano`, `vim`, `tmux`, `htop`, `mc`, or `bash`.
 - **5 Built-In Themes (Live-Switching):**
   - **Cyberdyne Obsidian** *(Default — matte carbon glass + crimson T-800 accents)*
   - **T-800 Tactical HUD** *(High-contrast crimson optical HUD)*

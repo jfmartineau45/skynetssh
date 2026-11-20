@@ -111,6 +111,8 @@ interface WorkspaceState {
   setRightClickPaste: (val: boolean) => void;
   showSnippetsSection: boolean;
   setShowSnippetsSection: (val: boolean) => void;
+  inlineHashSnippets: boolean;
+  setInlineHashSnippets: (val: boolean) => void;
 
   tabs: WorkspaceTab[];
   activeTabId: string;
@@ -216,6 +218,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   setShowSnippetsSection: (showSnippetsSection) => {
     localStorage.setItem("skynet_show_snippets", String(showSnippetsSection));
     set({ showSnippetsSection });
+  },
+  inlineHashSnippets:
+    localStorage.getItem("skynet_inline_hash_snippets") !== "false",
+  setInlineHashSnippets: (inlineHashSnippets) => {
+    localStorage.setItem(
+      "skynet_inline_hash_snippets",
+      String(inlineHashSnippets)
+    );
+    set({ inlineHashSnippets });
   },
 
   tabs: [{ id: "vault", kind: "vault", title: "Vault", pinned: true }],

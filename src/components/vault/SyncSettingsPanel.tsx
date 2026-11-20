@@ -61,6 +61,8 @@ export const SyncSettingsPanel: React.FC = () => {
     setRightClickPaste,
     showSnippetsSection,
     setShowSnippetsSection,
+    inlineHashSnippets,
+    setInlineHashSnippets,
     terminalFontSize,
     adjustFontSize,
   } = useWorkspaceStore();
@@ -616,15 +618,26 @@ export const SyncSettingsPanel: React.FC = () => {
                 className="accent-[var(--accent-primary)]"
               />
             </label>
+            <label className="flex items-center justify-between cursor-pointer">
+              <span>
+                Inline <code>##</code> snippet trigger (auto-off in nano/vim/tmux)
+              </span>
+              <input
+                type="checkbox"
+                checked={inlineHashSnippets}
+                onChange={(e) => setInlineHashSnippets(e.target.checked)}
+                className="accent-[var(--accent-primary)]"
+              />
+            </label>
             <div className="pt-2 border-t border-[var(--border-subtle)] grid grid-cols-2 gap-y-1 text-[11px] text-[var(--text-muted)] font-mono">
               <span>Ctrl+` : Bring to Front</span>
-              <span>Ctrl+K : Command Palette</span>
+              <span>Ctrl+Shift+P : Command</span>
               <span>Ctrl+Shift+T : New Shell</span>
               <span>Ctrl+Shift+N : New Host</span>
               <span>Alt+Shift+D : Split Right</span>
               <span>Alt+Shift+E : Split Down</span>
               <span>Ctrl+Tab : Cycle Tabs</span>
-              <span>Ctrl+1..9 : Jump to Tab</span>
+              <span>Ctrl+Alt+1..9 : Jump Tab</span>
             </div>
           </div>
         </div>

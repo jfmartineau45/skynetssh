@@ -49,7 +49,24 @@ export const CommandPalette: React.FC = () => {
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+      const target = e.target as HTMLElement | null;
+      const insideTerminal = Boolean(target?.closest?.(".xterm"));
+
+      // Ctrl+Shift+P works everywhere (Tabby / Windows Terminal standard, zero nano/vim/bash conflict).
+      // Ctrl+K ONLY triggers outside terminals so nano (^K cut line) and bash (kill-line) work 100% natively!
+      const isCtrlShiftP =
+        (e.ctrlKey || e.metaKey) &&
+        e.shiftKey &&
+        !e.altKey &&
+        e.key.toLowerCase() === "p";
+      const isNonTerminalCtrlK =
+        !insideTerminal &&
+        (e.ctrlKey || e.metaKey) &&
+        !e.shiftKey &&
+        !e.altKey &&
+        e.key.toLowerCase() === "k";
+
+      if (isCtrlShiftP || isNonTerminalCtrlK) {
         e.preventDefault();
         setCommandPaletteOpen(!commandPaletteOpen);
         setQuery("");
