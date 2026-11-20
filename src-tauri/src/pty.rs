@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
 use std::path::Path;
 use std::process::Command;
@@ -9,11 +9,18 @@ use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use tauri::ipc::Channel;
 
 use crate::models::ShellProfile;
+use crate::ssh::append_replay_bytes;
+
+const PTY_REPLAY_CAP: usize = 65_536;
+
+type PtySinkState = Arc<Mutex<(Channel<Vec<u8>>, VecDeque<u8>)>>;
 
 struct ActivePtySession {
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
+    sink: PtySinkState,
+    owner_window: String,
 }
 
 #[derive(Default, Clone)]
@@ -111,6 +118,7 @@ impl PtyManager {
         cols: u16,
         rows: u16,
         on_data: Channel<Vec<u8>>,
+        window_label: String,
     ) -> Result<String> {
         let pty_system = native_pty_system();
         let pair = pty_system.openpty(PtySize {
@@ -138,6 +146,12 @@ impl PtyManager {
         let session_id_clone = session_id.clone();
         let sessions_ref = self.sessions.clone();
 
+        let sink: PtySinkState = Arc::new(Mutex::new((
+            on_data,
+            VecDeque::with_capacity(PTY_REPLAY_CAP),
+        )));
+        let sink_for_thread = sink.clone();
+
         // Coalesce high-speed PTY output over a 4ms / 64 KB window before IPC dispatch
         let (byte_tx, byte_rx) = std::sync::mpsc::channel::<Vec<u8>>();
         std::thread::spawn(move || {
@@ -152,7 +166,7 @@ impl PtyManager {
         std::thread::spawn(move || {
             while let Ok(mut batch) = byte_rx.recv() {
                 let deadline = std::time::Instant::now() + std::time::Duration::from_millis(4);
-                while batch.len() < 65536 {
+                while batch.len() < PTY_REPLAY_CAP {
                     let rem = deadline.saturating_duration_since(std::time::Instant::now());
                     if rem.is_zero() {
                         break;
@@ -162,11 +176,18 @@ impl PtyManager {
                         Err(_) => break,
                     }
                 }
-                if on_data.send(batch).is_err() {
-                    break;
+                if let Ok(mut guard) = sink_for_thread.lock() {
+                    let (ref ch, ref mut replay) = *guard;
+                    append_replay_bytes(replay, &batch, PTY_REPLAY_CAP);
+                    // Ignore transient IPC errors during cross-window session handoff!
+                    let _ = ch.send(batch);
                 }
             }
-            let _ = on_data.send(b"\r\n\x1b[90m[Process exited]\x1b[0m\r\n".to_vec());
+            if let Ok(guard) = sink_for_thread.lock() {
+                let _ = guard
+                    .0
+                    .send(b"\r\n\x1b[90m[Process exited]\x1b[0m\r\n".to_vec());
+            }
             if let Ok(mut guard) = sessions_ref.lock() {
                 guard.remove(&session_id_clone);
             }
@@ -181,10 +202,44 @@ impl PtyManager {
                     master: pair.master,
                     writer,
                     child,
+                    sink,
+                    owner_window: window_label,
                 },
             );
 
         Ok(session_id)
+    }
+
+    pub fn reattach(
+        &self,
+        session_id: &str,
+        cols: u16,
+        rows: u16,
+        new_on_data: Channel<Vec<u8>>,
+        window_label: String,
+    ) -> Result<()> {
+        let mut guard = self
+            .sessions
+            .lock()
+            .map_err(|_| anyhow!("Mutex poisoned"))?;
+        let sess = guard
+            .get_mut(session_id)
+            .ok_or_else(|| anyhow!("Local PTY session is no longer active"))?;
+        sess.owner_window = window_label;
+        if let Ok(mut sink_guard) = sess.sink.lock() {
+            if !sink_guard.1.is_empty() {
+                let snapshot: Vec<u8> = sink_guard.1.iter().copied().collect();
+                let _ = new_on_data.send(snapshot);
+            }
+            sink_guard.0 = new_on_data;
+        }
+        let _ = sess.master.resize(PtySize {
+            rows: rows.max(5),
+            cols: cols.max(20),
+            pixel_width: 0,
+            pixel_height: 0,
+        });
+        Ok(())
     }
 
     pub fn write(&self, session_id: &str, data: &[u8]) -> Result<()> {
@@ -224,5 +279,21 @@ impl PtyManager {
             let _ = sess.child.kill();
         }
         Ok(())
+    }
+
+    pub fn close_for_window(&self, window_label: &str) {
+        let Ok(mut guard) = self.sessions.lock() else {
+            return;
+        };
+        let ids: Vec<String> = guard
+            .iter()
+            .filter(|(_, s)| s.owner_window == window_label)
+            .map(|(k, _)| k.clone())
+            .collect();
+        for id in ids {
+            if let Some(mut sess) = guard.remove(&id) {
+                let _ = sess.child.kill();
+            }
+        }
     }
 }

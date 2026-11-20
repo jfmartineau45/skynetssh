@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -154,9 +154,32 @@ impl client::Handler for SshClientHandler {
     }
 }
 
+const SHELL_REPLAY_CAP: usize = 65_536;
+
+pub(crate) fn append_replay_bytes(buf: &mut VecDeque<u8>, chunk: &[u8], cap: usize) {
+    if cap == 0 || chunk.is_empty() {
+        return;
+    }
+    if chunk.len() >= cap {
+        buf.clear();
+        buf.extend(&chunk[chunk.len() - cap..]);
+        return;
+    }
+    let overflow = (buf.len() + chunk.len()).saturating_sub(cap);
+    if overflow > 0 {
+        buf.drain(..overflow);
+    }
+    buf.extend(chunk);
+}
+
 enum ShellControl {
     Data(Vec<u8>),
     Resize { cols: u32, rows: u32 },
+    Reattach {
+        on_data: IpcChannel<Vec<u8>>,
+        cols: u32,
+        rows: u32,
+    },
     Close,
 }
 
@@ -164,6 +187,7 @@ enum ShellControl {
 pub struct SshPool {
     handles: Arc<Mutex<HashMap<String, Arc<Handle<SshClientHandler>>>>>,
     shells: Arc<Mutex<HashMap<String, mpsc::UnboundedSender<ShellControl>>>>,
+    shell_owners: Arc<Mutex<HashMap<String, String>>>,
     pending_prompts: Arc<Mutex<HashMap<String, oneshot::Sender<bool>>>>,
 }
 
@@ -178,6 +202,7 @@ impl SshPool {
         Self {
             handles: Arc::new(Mutex::new(HashMap::new())),
             shells: Arc::new(Mutex::new(HashMap::new())),
+            shell_owners: Arc::new(Mutex::new(HashMap::new())),
             pending_prompts: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -528,6 +553,7 @@ impl SshPool {
         on_data: IpcChannel<Vec<u8>>,
         vault: Arc<std::sync::Mutex<VaultEngine>>,
         app_handle: AppHandle,
+        window_label: String,
     ) -> Result<String> {
         let handle = self
             .get_or_connect(host_id, vault, Some(app_handle))
@@ -559,12 +585,19 @@ impl SshPool {
         let session_id = uuid::Uuid::new_v4().to_string();
         let (tx, mut rx) = mpsc::unbounded_channel::<ShellControl>();
         self.shells.lock().await.insert(session_id.clone(), tx);
+        self.shell_owners
+            .lock()
+            .await
+            .insert(session_id.clone(), window_label);
 
         let shells_map = self.shells.clone();
+        let owners_map = self.shell_owners.clone();
         let sid_clone = session_id.clone();
 
         tokio::spawn(async move {
+            let mut on_data = on_data;
             let mut out_buf: Vec<u8> = Vec::with_capacity(16384);
+            let mut replay_buf: VecDeque<u8> = VecDeque::with_capacity(SHELL_REPLAY_CAP);
             loop {
                 let flush_sleep = tokio::time::sleep(Duration::from_millis(4));
                 tokio::pin!(flush_sleep);
@@ -578,7 +611,19 @@ impl SshPool {
                                 }
                             }
                             ShellControl::Resize { cols, rows } => {
-                                let _ = channel.window_change(cols, rows, 0, 0).await;
+                                let _ = channel.window_change(cols.max(20), rows.max(5), 0, 0).await;
+                            }
+                            ShellControl::Reattach { on_data: new_sink, cols, rows } => {
+                                if !out_buf.is_empty() {
+                                    append_replay_bytes(&mut replay_buf, &out_buf, SHELL_REPLAY_CAP);
+                                    out_buf.clear();
+                                }
+                                if !replay_buf.is_empty() {
+                                    let snapshot: Vec<u8> = replay_buf.iter().copied().collect();
+                                    let _ = new_sink.send(snapshot);
+                                }
+                                on_data = new_sink;
+                                let _ = channel.window_change(cols.max(20), rows.max(5), 0, 0).await;
                             }
                             ShellControl::Close => {
                                 let _ = channel.eof().await;
@@ -591,12 +636,15 @@ impl SshPool {
                         match maybe_msg {
                             Some(ChannelMsg::Data { ref data }) | Some(ChannelMsg::ExtendedData { ref data, .. }) => {
                                 out_buf.extend_from_slice(data);
-                                if out_buf.len() >= 65536 && on_data.send(std::mem::take(&mut out_buf)).is_err() {
-                                    break;
+                                if out_buf.len() >= SHELL_REPLAY_CAP {
+                                    append_replay_bytes(&mut replay_buf, &out_buf, SHELL_REPLAY_CAP);
+                                    // Ignore transient IPC send errors so cross-window session handoff never drops the remote shell!
+                                    let _ = on_data.send(std::mem::take(&mut out_buf));
                                 }
                             }
                             Some(ChannelMsg::Close) | None => {
                                 if !out_buf.is_empty() {
+                                    append_replay_bytes(&mut replay_buf, &out_buf, SHELL_REPLAY_CAP);
                                     let _ = on_data.send(std::mem::take(&mut out_buf));
                                 }
                                 let _ = on_data.send(b"\r\n\x1b[90m[SSH session closed]\x1b[0m\r\n".to_vec());
@@ -606,16 +654,44 @@ impl SshPool {
                         }
                     }
                     _ = &mut flush_sleep, if !out_buf.is_empty() => {
-                        if on_data.send(std::mem::take(&mut out_buf)).is_err() {
-                            break;
-                        }
+                        append_replay_bytes(&mut replay_buf, &out_buf, SHELL_REPLAY_CAP);
+                        let _ = on_data.send(std::mem::take(&mut out_buf));
                     }
                 }
             }
             shells_map.lock().await.remove(&sid_clone);
+            owners_map.lock().await.remove(&sid_clone);
         });
 
         Ok(session_id)
+    }
+
+    pub async fn reattach_shell(
+        &self,
+        session_id: &str,
+        cols: u32,
+        rows: u32,
+        on_data: IpcChannel<Vec<u8>>,
+        window_label: String,
+    ) -> Result<()> {
+        let tx = self
+            .shells
+            .lock()
+            .await
+            .get(session_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("SSH shell session is no longer active"))?;
+        tx.send(ShellControl::Reattach {
+            on_data,
+            cols,
+            rows,
+        })
+        .map_err(|_| anyhow!("SSH shell session closed"))?;
+        self.shell_owners
+            .lock()
+            .await
+            .insert(session_id.to_string(), window_label);
+        Ok(())
     }
 
     pub async fn write_shell(&self, session_id: &str, data: Vec<u8>) -> Result<()> {
@@ -633,13 +709,39 @@ impl SshPool {
     }
 
     pub async fn close_shell(&self, session_id: &str) -> Result<()> {
+        self.shell_owners.lock().await.remove(session_id);
         if let Some(tx) = self.shells.lock().await.remove(session_id) {
             let _ = tx.send(ShellControl::Close);
         }
         Ok(())
     }
 
+    pub async fn close_shells_for_window(&self, window_label: &str) {
+        let matching_ids: Vec<String> = {
+            let mut owners = self.shell_owners.lock().await;
+            let ids: Vec<String> = owners
+                .iter()
+                .filter(|(_, w)| w.as_str() == window_label)
+                .map(|(sid, _)| sid.clone())
+                .collect();
+            for sid in &ids {
+                owners.remove(sid);
+            }
+            ids
+        };
+        if matching_ids.is_empty() {
+            return;
+        }
+        let mut shells = self.shells.lock().await;
+        for sid in matching_ids {
+            if let Some(tx) = shells.remove(&sid) {
+                let _ = tx.send(ShellControl::Close);
+            }
+        }
+    }
+
     pub async fn disconnect_all(&self) {
+        self.shell_owners.lock().await.clear();
         let shells: Vec<_> = self.shells.lock().await.drain().collect();
         for (_, tx) in shells {
             let _ = tx.send(ShellControl::Close);
@@ -858,5 +960,18 @@ mod tests {
         assert!(requires_multi_ping_warmup("198.18.0.15", "App VM", None));
         assert!(requires_multi_ping_warmup("10.20.1.5", "Prod DB", Some("Client - Secorall")));
         assert!(!requires_multi_ping_warmup("192.168.45.205", "Paperless", Some("Homelab")));
+    }
+
+    #[test]
+    fn test_append_replay_ring_buffer_bounds() {
+        let mut ring = VecDeque::new();
+        append_replay_bytes(&mut ring, b"hello ", 10);
+        append_replay_bytes(&mut ring, b"world!", 10);
+        let s: Vec<u8> = ring.iter().copied().collect();
+        assert_eq!(s, b"llo world!");
+
+        append_replay_bytes(&mut ring, b"0123456789ABCDEF", 10);
+        let s2: Vec<u8> = ring.iter().copied().collect();
+        assert_eq!(s2, b"6789ABCDEF");
     }
 }

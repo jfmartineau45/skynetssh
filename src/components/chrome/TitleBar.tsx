@@ -18,6 +18,7 @@ import {
   Check,
   FolderOpen,
   ExternalLink,
+  ArrowDownLeft,
   Columns2,
   Rows2,
   Pin,
@@ -37,9 +38,11 @@ export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
     tabs,
     activeTabId,
     setActiveTab,
+    reorderTabs,
     closeTab,
     dockTabIntoSplit,
     popoutTabToWindow,
+    dockPopoutToMain,
     shells,
     openHostTerminal,
     openLocalTerminal,
@@ -87,6 +90,13 @@ export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
   const vaultBtnRef = useRef<HTMLButtonElement>(null);
 
   const [alwaysOnTop, setAlwaysOnTop] = useState(false);
+  const [draggedTabGhost, setDraggedTabGhost] = useState<{
+    tabId: string;
+    title: string;
+    x: number;
+    y: number;
+    detachReady: boolean;
+  } | null>(null);
   const eyeClicksRef = useRef<{ count: number; lastAt: number }>({
     count: 0,
     lastAt: 0,
@@ -97,6 +107,101 @@ export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
     left: number;
   } | null>(null);
   const tabCtxRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const onTogglePin = () => {
+      if (!isTauriRuntime()) return;
+      setAlwaysOnTop((prev) => {
+        const next = !prev;
+        void getCurrentWindow().setAlwaysOnTop(next);
+        return next;
+      });
+    };
+    window.addEventListener("skynet-toggle-pin", onTogglePin);
+    return () => window.removeEventListener("skynet-toggle-pin", onTogglePin);
+  }, []);
+
+  const handleTabMouseDown = (
+    e: React.MouseEvent<HTMLDivElement>,
+    tabId: string,
+    tabTitle: string,
+    tabKind: string
+  ) => {
+    if (e.button !== 0) return;
+    if ((e.target as HTMLElement | null)?.closest("button")) return;
+
+    setActiveTab(tabId);
+    if (tabKind === "vault") return;
+
+    const startX = e.clientX;
+    const startY = e.clientY;
+    let dragging = false;
+    let cancelled = false;
+
+    const isOutsideTabStrip = (ev: MouseEvent) =>
+      !isPopout &&
+      tabKind === "terminal" &&
+      isTauriRuntime() &&
+      (ev.clientY > 56 ||
+        ev.clientY < -12 ||
+        ev.clientX < -16 ||
+        ev.clientX > window.innerWidth + 16);
+
+    const cleanup = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      window.removeEventListener("keydown", onKey);
+      setDraggedTabGhost(null);
+    };
+
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === "Escape") {
+        cancelled = true;
+        cleanup();
+      }
+    };
+
+    const onMove = (ev: MouseEvent) => {
+      if (cancelled) return;
+      if (!dragging) {
+        if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < 6) return;
+        dragging = true;
+      }
+
+      const detachReady = isOutsideTabStrip(ev);
+      setDraggedTabGhost({
+        tabId,
+        title: tabTitle,
+        x: Math.max(8, Math.min(ev.clientX + 12, window.innerWidth - 260)),
+        y: Math.max(8, Math.min(ev.clientY + 14, window.innerHeight - 44)),
+        detachReady,
+      });
+
+      if (!detachReady) {
+        const hovered = document
+          .elementFromPoint(ev.clientX, 20)
+          ?.closest("[data-skynet-tab-id]") as HTMLElement | null;
+        const targetId = hovered?.dataset?.skynetTabId;
+        if (targetId && targetId !== tabId && targetId !== "vault") {
+          reorderTabs(tabId, targetId);
+        }
+      }
+    };
+
+    const onUp = (ev: MouseEvent) => {
+      const shouldPopout = !cancelled && dragging && isOutsideTabStrip(ev);
+      cleanup();
+      if (shouldPopout) {
+        const dropX = Math.round(ev.screenX - 140);
+        const dropY = Math.round(ev.screenY - 18);
+        void popoutTabToWindow(tabId, { x: dropX, y: dropY });
+      }
+    };
+
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    window.addEventListener("keydown", onKey);
+  };
 
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
@@ -395,9 +500,14 @@ export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
         <div className="flex items-center h-full px-1.5 gap-1 overflow-x-auto no-scrollbar">
           {tabs.map((tab) => {
             const isActive = tab.id === activeTabId;
+            const isDraggingThis = draggedTabGhost?.tabId === tab.id;
             return (
               <div
                 key={tab.id}
+                data-skynet-tab-id={tab.id}
+                onMouseDown={(e) =>
+                  handleTabMouseDown(e, tab.id, tab.title, tab.kind)
+                }
                 onClick={() => setActiveTab(tab.id)}
                 onContextMenu={(e) => {
                   if (tab.kind === "terminal") {
@@ -412,7 +522,16 @@ export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
                 onAuxClick={(e) => {
                   if (e.button === 1 && tab.kind !== "vault") closeTab(tab.id);
                 }}
+                title={
+                  tab.kind === "terminal" && !isPopout
+                    ? `${tab.title} — Drag outside bar to Pop Out (or Ctrl+Shift+O)`
+                    : tab.title
+                }
                 className={`group relative flex items-center gap-1.5 h-7 px-2.5 rounded-md text-xs font-medium cursor-pointer transition-all shrink-0 ${
+                  isDraggingThis && draggedTabGhost?.detachReady
+                    ? "opacity-45 ring-1 ring-sky-400/60"
+                    : ""
+                } ${
                   isActive
                     ? "bg-[var(--bg-elevated)] text-[var(--text-primary)] border border-[var(--border-accent)] shadow-sm"
                     : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] border border-transparent"
@@ -660,6 +779,17 @@ export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
 
         {isPopout && isTauriRuntime() && (
           <button
+            onClick={() => void dockPopoutToMain()}
+            className="flex items-center gap-1 h-6 px-2 rounded text-[11px] font-medium bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/35 transition"
+            title="Dock live terminal back into Main window tab bar (Ctrl+Shift+O)"
+          >
+            <ArrowDownLeft className="w-3 h-3" />
+            <span>Dock</span>
+          </button>
+        )}
+
+        {isTauriRuntime() && (
+          <button
             onClick={async () => {
               const next = !alwaysOnTop;
               setAlwaysOnTop(next);
@@ -670,10 +800,12 @@ export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
                 ? "bg-sky-500/25 text-sky-200 border border-sky-400/50"
                 : "text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-hover)]"
             }`}
-            title="Pin popped-out terminal window Always on Top"
+            title="Pin window Always on Top (Alt+Shift+P)"
           >
             <Pin className="w-3 h-3" />
-            <span>{alwaysOnTop ? "Pinned" : "Pin Top"}</span>
+            <span className={isPopout ? "inline" : "hidden xl:inline"}>
+              {alwaysOnTop ? "Pinned" : "Pin"}
+            </span>
           </button>
         )}
 
@@ -808,7 +940,7 @@ export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
               </>
             )}
 
-            {isTauriRuntime() && (
+            {isTauriRuntime() && !isPopout && (
               <button
                 onClick={() => {
                   setTabCtxMenu(null);
@@ -817,7 +949,20 @@ export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
                 className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-[var(--bg-hover)] text-sky-300 font-medium"
               >
                 <ExternalLink className="w-3.5 h-3.5 shrink-0" />
-                <span>Pop Out into New Window</span>
+                <span>Pop Out Window (Ctrl+Shift+O)</span>
+              </button>
+            )}
+
+            {isTauriRuntime() && isPopout && (
+              <button
+                onClick={() => {
+                  setTabCtxMenu(null);
+                  void dockPopoutToMain(ctxTab.id);
+                }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-[var(--bg-hover)] text-emerald-300 font-medium"
+              >
+                <ArrowDownLeft className="w-3.5 h-3.5 shrink-0" />
+                <span>Dock Back to Main (Ctrl+Shift+O)</span>
               </button>
             )}
 
@@ -835,6 +980,31 @@ export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
           </div>
         );
       })()}
+
+      {/* Floating Drag-Tab-Out Cursor Preview Pill */}
+      {draggedTabGhost && (
+        <div
+          style={{ top: draggedTabGhost.y, left: draggedTabGhost.x }}
+          className={`fixed pointer-events-none z-[100] flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-semibold shadow-2xl transition-colors ${
+            draggedTabGhost.detachReady
+              ? "bg-sky-950/95 border-sky-400 text-sky-100 shadow-[0_0_20px_rgba(56,189,248,0.35)]"
+              : "bg-[var(--bg-elevated)]/95 border-[var(--border-accent)] text-[var(--text-primary)]"
+          }`}
+        >
+          <ExternalLink
+            className={`w-3.5 h-3.5 shrink-0 ${
+              draggedTabGhost.detachReady
+                ? "text-sky-300"
+                : "text-[var(--text-muted)]"
+            }`}
+          />
+          <span className="max-w-[200px] truncate">
+            {draggedTabGhost.detachReady
+              ? `Release to Pop Out "${draggedTabGhost.title}"`
+              : `Move "${draggedTabGhost.title}" (drag down to Pop Out)`}
+          </span>
+        </div>
+      )}
     </header>
   );
 };

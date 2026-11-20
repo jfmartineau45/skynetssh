@@ -34,6 +34,7 @@ pub struct AppState {
     pub ssh: SshPool,
     pub tunnels: TunnelManager,
     pub vault_watcher: Arc<Mutex<Option<RecommendedWatcher>>>,
+    pub standby_popout: Arc<Mutex<Option<String>>>,
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -463,9 +464,28 @@ fn pty_spawn(
     cols: u16,
     rows: u16,
     on_data: Channel<Vec<u8>>,
+    window: tauri::WebviewWindow,
     state: State<'_, AppState>,
 ) -> CmdResult<String> {
-    state.pty.spawn(profile, cols, rows, on_data).map_err(err_str)
+    state
+        .pty
+        .spawn(profile, cols, rows, on_data, window.label().to_string())
+        .map_err(err_str)
+}
+
+#[tauri::command]
+fn pty_reattach(
+    session_id: String,
+    cols: u16,
+    rows: u16,
+    on_data: Channel<Vec<u8>>,
+    window: tauri::WebviewWindow,
+    state: State<'_, AppState>,
+) -> CmdResult<()> {
+    state
+        .pty
+        .reattach(&session_id, cols, rows, on_data, window.label().to_string())
+        .map_err(err_str)
 }
 
 #[tauri::command]
@@ -495,12 +515,37 @@ async fn ssh_open_shell(
     cols: u32,
     rows: u32,
     on_data: Channel<Vec<u8>>,
+    window: tauri::WebviewWindow,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> CmdResult<String> {
     state
         .ssh
-        .open_shell(&host_id, cols, rows, on_data, state.vault.clone(), app)
+        .open_shell(
+            &host_id,
+            cols,
+            rows,
+            on_data,
+            state.vault.clone(),
+            app,
+            window.label().to_string(),
+        )
+        .await
+        .map_err(err_str)
+}
+
+#[tauri::command]
+async fn ssh_reattach_shell(
+    session_id: String,
+    cols: u32,
+    rows: u32,
+    on_data: Channel<Vec<u8>>,
+    window: tauri::WebviewWindow,
+    state: State<'_, AppState>,
+) -> CmdResult<()> {
+    state
+        .ssh
+        .reattach_shell(&session_id, cols, rows, on_data, window.label().to_string())
         .await
         .map_err(err_str)
 }
@@ -765,34 +810,188 @@ async fn tunnel_stop(tunnel_id: String, state: State<'_, AppState>) -> CmdResult
     state.tunnels.stop(&tunnel_id).await.map_err(err_str)
 }
 
-#[derive(serde::Serialize)]
+#[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PopoutInitPayload {
+    target_window: Option<String>,
     kind: String,
     host_id: Option<String>,
     shell_id: Option<String>,
+    session_id: Option<String>,
     title: String,
     vault_kind: String,
     vault_name: String,
 }
 
+fn bring_window_to_front(win: &tauri::WebviewWindow) {
+    let was_pinned = win.is_always_on_top().unwrap_or(false);
+    let _ = win.unminimize();
+    let _ = win.show();
+    if !was_pinned {
+        let _ = win.set_always_on_top(true);
+        let _ = win.set_always_on_top(false);
+    }
+    let _ = win.set_focus();
+}
+
+fn cleanup_if_no_visible_windows(app: &AppHandle, standby_slot: &Arc<Mutex<Option<String>>>) {
+    let standby_lbl = standby_slot.lock().ok().and_then(|g| g.clone());
+    let any_visible = app.webview_windows().iter().any(|(lbl, w)| {
+        if standby_lbl.as_deref() == Some(lbl.as_str()) {
+            return false;
+        }
+        w.is_visible().unwrap_or(false)
+    });
+    if !any_visible {
+        if let Some(lbl) = standby_lbl {
+            if let Ok(mut g) = standby_slot.lock() {
+                *g = None;
+            }
+            if let Some(w) = app.get_webview_window(&lbl) {
+                let _ = w.destroy();
+            }
+        }
+    }
+}
+
+fn attach_window_lifecycle_hook(win: &tauri::WebviewWindow, app: AppHandle) {
+    let lbl = win.label().to_string();
+    win.on_window_event(move |ev| {
+        if matches!(ev, tauri::WindowEvent::Destroyed) {
+            if let Some(st) = app.try_state::<AppState>() {
+                cleanup_if_no_visible_windows(&app, &st.standby_popout);
+                let ssh = st.ssh.clone();
+                let pty = st.pty.clone();
+                let destroyed_lbl = lbl.clone();
+                tauri::async_runtime::spawn(async move {
+                    // Grace window so any in-flight dock/popout handoff can reattach first
+                    tokio::time::sleep(Duration::from_millis(1500)).await;
+                    ssh.close_shells_for_window(&destroyed_lbl).await;
+                    pty.close_for_window(&destroyed_lbl);
+                });
+            }
+        }
+    });
+}
+
+/// Pre-warms a hidden pop-out `WebviewWindow` in the background so dragging or popping out a
+/// terminal tab shows an already-mounted React + xterm window in <15ms with zero WebView2 boot pause!
+fn spawn_standby_popout(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        if let Some(st) = app.try_state::<AppState>() {
+            let existing = st.standby_popout.lock().ok().and_then(|g| g.clone());
+            if let Some(lbl) = existing {
+                if app.get_webview_window(&lbl).is_some() {
+                    return;
+                }
+            }
+        }
+
+        let label = format!("popout-{}", uuid::Uuid::new_v4().simple());
+        let Ok(win) = tauri::WebviewWindowBuilder::new(
+            &app,
+            &label,
+            tauri::WebviewUrl::App("index.html".into()),
+        )
+        .initialization_script("window.__SKYNET_STANDBY_POPOUT__ = true;")
+        .title("SkynetSSH — Terminal")
+        .inner_size(1040.0, 680.0)
+        .min_inner_size(520.0, 340.0)
+        .decorations(false)
+        .transparent(true)
+        .background_color(tauri::window::Color(9, 10, 14, 255))
+        .visible(false)
+        .center()
+        .build() else {
+            return;
+        };
+
+        attach_window_lifecycle_hook(&win, app.clone());
+
+        #[cfg(target_os = "windows")]
+        {
+            let w = win.clone();
+            let _ = win.run_on_main_thread(move || {
+                if window_vibrancy::apply_mica(&w, Some(true)).is_err() {
+                    let _ = window_vibrancy::apply_acrylic(&w, Some((10, 12, 18, 220)));
+                }
+            });
+        }
+    });
+}
+
+#[tauri::command]
+fn window_mark_standby_ready(
+    window: tauri::WebviewWindow,
+    state: State<'_, AppState>,
+) -> CmdResult<()> {
+    if !window.is_visible().unwrap_or(true) {
+        if let Ok(mut guard) = state.standby_popout.lock() {
+            *guard = Some(window.label().to_string());
+        }
+    }
+    Ok(())
+}
+
 /// MUST be `async fn` on Windows! Synchronous `WebviewWindowBuilder::build` on the main UI thread
 /// deadlocks WebView2 IPC (`tauri::webview::webview_window.rs:58`).
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 async fn window_popout_terminal(
     kind: String,
     host_id: Option<String>,
     shell_id: Option<String>,
+    session_id: Option<String>,
     title: String,
     vault_kind: Option<String>,
     vault_name: Option<String>,
+    x: Option<f64>,
+    y: Option<f64>,
     app: AppHandle,
+    state: State<'_, AppState>,
 ) -> CmdResult<String> {
+    // Fast path (<15ms): claim the pre-warmed standby WebviewWindow if ready!
+    let claimed_standby = state
+        .standby_popout
+        .lock()
+        .ok()
+        .and_then(|mut g| g.take())
+        .and_then(|lbl| app.get_webview_window(&lbl).map(|w| (lbl, w)));
+
+    if let Some((standby_label, win)) = claimed_standby {
+        let payload = PopoutInitPayload {
+            target_window: Some(standby_label.clone()),
+            kind,
+            host_id: host_id.filter(|s| !s.is_empty()),
+            shell_id: shell_id.filter(|s| !s.is_empty()),
+            session_id: session_id.filter(|s| !s.is_empty()),
+            title: title.clone(),
+            vault_kind: vault_kind.unwrap_or_else(|| "personal".into()),
+            vault_name: vault_name.unwrap_or_else(|| "Personal Vault".into()),
+        };
+
+        let _ = win.set_title(&format!("SkynetSSH — {title}"));
+        if let (Some(px), Some(py)) = (x, y) {
+            let _ = win.set_position(tauri::LogicalPosition::new(px, py));
+        } else {
+            let _ = win.center();
+        }
+        let _ = app.emit("skynet-activate-popout", &payload);
+        bring_window_to_front(&win);
+
+        // Immediately warm up the next standby window in the background
+        spawn_standby_popout(app.clone());
+        return Ok(standby_label);
+    }
+
+    // Cold fallback if popped out before standby finished booting
     let label = format!("popout-{}", uuid::Uuid::new_v4().simple());
     let payload = PopoutInitPayload {
+        target_window: Some(label.clone()),
         kind,
         host_id: host_id.filter(|s| !s.is_empty()),
         shell_id: shell_id.filter(|s| !s.is_empty()),
+        session_id: session_id.filter(|s| !s.is_empty()),
         title: title.clone(),
         vault_kind: vault_kind.unwrap_or_else(|| "personal".into()),
         vault_name: vault_name.unwrap_or_else(|| "Personal Vault".into()),
@@ -800,7 +999,7 @@ async fn window_popout_terminal(
     let init_json = serde_json::to_string(&payload).map_err(err_str)?;
     let init_script = format!("window.__SKYNET_POPOUT__ = {init_json};");
 
-    let win = tauri::WebviewWindowBuilder::new(
+    let mut builder = tauri::WebviewWindowBuilder::new(
         &app,
         &label,
         tauri::WebviewUrl::App("index.html".into()),
@@ -811,9 +1010,16 @@ async fn window_popout_terminal(
     .min_inner_size(520.0, 340.0)
     .decorations(false)
     .transparent(true)
-    .center()
-    .build()
-    .map_err(err_str)?;
+    .background_color(tauri::window::Color(9, 10, 14, 255));
+
+    builder = if let (Some(px), Some(py)) = (x, y) {
+        builder.position(px, py)
+    } else {
+        builder.center()
+    };
+
+    let win = builder.build().map_err(err_str)?;
+    attach_window_lifecycle_hook(&win, app.clone());
 
     #[cfg(target_os = "windows")]
     {
@@ -825,7 +1031,40 @@ async fn window_popout_terminal(
         });
     }
 
+    spawn_standby_popout(app);
     Ok(label)
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn window_dock_back_to_main(
+    kind: String,
+    host_id: Option<String>,
+    shell_id: Option<String>,
+    session_id: Option<String>,
+    title: String,
+    vault_kind: Option<String>,
+    vault_name: Option<String>,
+    window: tauri::WebviewWindow,
+    app: AppHandle,
+) -> CmdResult<()> {
+    let Some(main_win) = app.get_webview_window("main") else {
+        return Err("Main SkynetSSH window is closed".into());
+    };
+    let payload = PopoutInitPayload {
+        target_window: Some("main".into()),
+        kind,
+        host_id: host_id.filter(|s| !s.is_empty()),
+        shell_id: shell_id.filter(|s| !s.is_empty()),
+        session_id: session_id.filter(|s| !s.is_empty()),
+        title,
+        vault_kind: vault_kind.unwrap_or_else(|| "personal".into()),
+        vault_name: vault_name.unwrap_or_else(|| "Personal Vault".into()),
+    };
+    let _ = app.emit("skynet-dock-from-popout", &payload);
+    bring_window_to_front(&main_win);
+    let _ = window.close();
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -839,20 +1078,44 @@ pub fn run() {
             GlobalShortcutBuilder::new()
                 .with_handler(|app, _shortcut, event| {
                     if event.state == ShortcutState::Pressed {
-                        if let Some(win) = app.get_webview_window("main") {
-                            let focused = win.is_focused().unwrap_or(false);
-                            let minimized = win.is_minimized().unwrap_or(false);
-                            if focused && !minimized {
-                                let _ = win.minimize();
-                            } else {
-                                let _ = win.unminimize();
-                                let _ = win.show();
-                                // Pulse always_on_top so Windows 11 foreground-lock yields focus reliably
-                                let _ = win.set_always_on_top(true);
-                                let _ = win.set_always_on_top(false);
-                                let _ = win.set_focus();
-                                let _ = app.emit("app-quake-focus", ());
+                        let standby_lbl = app
+                            .try_state::<AppState>()
+                            .and_then(|st| st.standby_popout.lock().ok().and_then(|g| g.clone()));
+
+                        let active_windows: Vec<(String, tauri::WebviewWindow)> = app
+                            .webview_windows()
+                            .into_iter()
+                            .filter(|(lbl, w)| {
+                                if standby_lbl.as_deref() == Some(lbl.as_str()) {
+                                    return false;
+                                }
+                                lbl == "main" || w.is_visible().unwrap_or(false)
+                            })
+                            .collect();
+
+                        let any_focused = active_windows.iter().any(|(_, w)| {
+                            w.is_focused().unwrap_or(false) && !w.is_minimized().unwrap_or(false)
+                        });
+
+                        if any_focused {
+                            for (_, w) in &active_windows {
+                                if !w.is_always_on_top().unwrap_or(false) {
+                                    let _ = w.minimize();
+                                }
                             }
+                        } else {
+                            // Bring pop-outs forward first, then focus main on top (or pop-out if main was closed)
+                            for (lbl, w) in &active_windows {
+                                if lbl != "main" {
+                                    bring_window_to_front(w);
+                                }
+                            }
+                            if let Some((_, main_w)) =
+                                active_windows.iter().find(|(lbl, _)| lbl == "main")
+                            {
+                                bring_window_to_front(main_w);
+                            }
+                            let _ = app.emit("app-quake-focus", ());
                         }
                     }
                 })
@@ -869,6 +1132,7 @@ pub fn run() {
             let initial_vault_dir = vault_engine.vault_dir();
             let initial_hotkey = vault_engine.global_hotkey().to_string();
             let watcher_slot = Arc::new(Mutex::new(None));
+            let standby_slot = Arc::new(Mutex::new(None));
 
             restart_vault_watcher(app.handle(), &watcher_slot, initial_vault_dir);
             let _ = apply_global_hotkey(app.handle(), &initial_hotkey);
@@ -879,9 +1143,11 @@ pub fn run() {
                 ssh: SshPool::new(),
                 tunnels: TunnelManager::new(),
                 vault_watcher: watcher_slot,
+                standby_popout: standby_slot,
             });
 
             if let Some(window) = app.get_webview_window("main") {
+                attach_window_lifecycle_hook(&window, app.handle().clone());
                 #[cfg(target_os = "windows")]
                 {
                     if window_vibrancy::apply_mica(&window, Some(true)).is_err() {
@@ -889,6 +1155,13 @@ pub fn run() {
                     }
                 }
             }
+
+            // Pre-warm hidden standby pop-out window slightly after main startup so pop-out is <15ms!
+            let app_for_standby = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(650)).await;
+                spawn_standby_popout(app_for_standby);
+            });
 
             Ok(())
         })
@@ -932,10 +1205,12 @@ pub fn run() {
             sync_git_now,
             pty_discover_shells,
             pty_spawn,
+            pty_reattach,
             pty_write,
             pty_resize,
             pty_close,
             ssh_open_shell,
+            ssh_reattach_shell,
             ssh_write,
             ssh_resize,
             ssh_close_shell,
@@ -956,7 +1231,9 @@ pub fn run() {
             tunnel_list_active,
             tunnel_start,
             tunnel_stop,
+            window_mark_standby_ready,
             window_popout_terminal,
+            window_dock_back_to_main,
         ])
         .run(tauri::generate_context!())
         .expect("error while running SkynetSSH");

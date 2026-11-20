@@ -9,10 +9,16 @@ import {
   Palette,
   CornerDownLeft,
   Columns2,
+  ExternalLink,
+  Pin,
   Droplets,
   Cpu,
 } from "lucide-react";
-import { useWorkspaceStore, collectPanes } from "../../store/useWorkspaceStore";
+import {
+  useWorkspaceStore,
+  collectPanes,
+  isPopoutWindowContext,
+} from "../../store/useWorkspaceStore";
 import { useVaultStore } from "../../store/useVaultStore";
 import { APP_THEMES } from "../../lib/themes";
 import { apiTunnelStart, apiTunnelStop } from "../../lib/ipc";
@@ -36,6 +42,8 @@ export const CommandPalette: React.FC = () => {
     openLocalTerminal,
     openDualSftpTab,
     splitPane,
+    popoutTabToWindow,
+    dockPopoutToMain,
     tabs,
     activeTabId,
     runSnippetOnPane,
@@ -173,6 +181,34 @@ export const CommandPalette: React.FC = () => {
       }
     }
 
+    if (activeTab && activeTab.kind === "terminal") {
+      const inPopout = isPopoutWindowContext();
+      list.push({
+        id: "win-popout-toggle",
+        category: "Window",
+        title: inPopout
+          ? `Dock "${activeTab.title}" Back to Main Window`
+          : `Pop Out "${activeTab.title}" into Standalone Window`,
+        subtitle: "Zero-pause live session handoff (Ctrl+Shift+O or drag tab out)",
+        icon: <ExternalLink className="w-4 h-4 text-sky-400" />,
+        run: () =>
+          inPopout
+            ? dockPopoutToMain(activeTab.id)
+            : popoutTabToWindow(activeTab.id),
+      });
+    }
+
+    list.push({
+      id: "win-pin-top",
+      category: "Window",
+      title: "Toggle Pin Window Always on Top",
+      subtitle: "Keep current window floating above other apps (Alt+Shift+P)",
+      icon: <Pin className="w-4 h-4 text-sky-300" />,
+      run: () => {
+        window.dispatchEvent(new CustomEvent("skynet-toggle-pin"));
+      },
+    });
+
     list.push({
       id: "fx-blood-rain",
       category: "Cyberdyne FX",
@@ -223,6 +259,8 @@ export const CommandPalette: React.FC = () => {
     openDualSftpTab,
     openLocalTerminal,
     splitPane,
+    popoutTabToWindow,
+    dockPopoutToMain,
     refreshTunnels,
     runSnippetOnPane,
     showSnippetsSection,

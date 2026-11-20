@@ -7,6 +7,11 @@ import {
   posixQuote,
   sortSftpEntries,
 } from "./sftpUtils.ts";
+import {
+  consumePaneSessionHandedOff,
+  markPaneSessionHandedOff,
+  reorderTabList,
+} from "./windowTabs.ts";
 
 test("parseSshConnectionString handles ssh -p, host:port, and IPv6", () => {
   assert.deepEqual(
@@ -78,4 +83,36 @@ test("sftpUtils formats relative modified times, quotes POSIX paths safely, and 
   // Pure modified desc (dirsFirst=false) surfaces fresh.log above old-folder!
   const sortedLatest = sortSftpEntries(items, "modified", "desc", false);
   assert.equal(sortedLatest[0].name, "fresh.log");
+});
+
+test("windowTabs reorders terminal tabs while keeping pinned Vault anchored and tracks live session handoffs", () => {
+  const tabs = [
+    { id: "vault" as const, kind: "vault" as const, title: "Vault", pinned: true },
+    {
+      id: "t1",
+      kind: "sftp" as const,
+      title: "Tab 1",
+      leftTarget: { type: "local" as const },
+      rightTarget: { type: "local" as const },
+    },
+    {
+      id: "t2",
+      kind: "sftp" as const,
+      title: "Tab 2",
+      leftTarget: { type: "local" as const },
+      rightTarget: { type: "local" as const },
+    },
+  ];
+  assert.deepEqual(
+    reorderTabList(tabs, "t2", "t1").map((t) => t.id),
+    ["vault", "t2", "t1"]
+  );
+  assert.deepEqual(
+    reorderTabList(tabs, "t1", "vault").map((t) => t.id),
+    ["vault", "t1", "t2"]
+  );
+
+  markPaneSessionHandedOff("pane-live-1");
+  assert.equal(consumePaneSessionHandedOff("pane-live-1"), true);
+  assert.equal(consumePaneSessionHandedOff("pane-live-1"), false);
 });

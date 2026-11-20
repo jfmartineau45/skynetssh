@@ -173,6 +173,24 @@ export const apiPtySpawn = (
   });
 };
 
+export const apiPtyReattach = (
+  sessionId: string,
+  cols: number,
+  rows: number,
+  onData: (chunk: Uint8Array) => void
+): Promise<void> => {
+  const channel = new Channel<number[]>();
+  channel.onmessage = (bytes) => {
+    onData(new Uint8Array(bytes));
+  };
+  return invoke<void>("pty_reattach", {
+    sessionId,
+    cols,
+    rows,
+    onData: channel,
+  });
+};
+
 export const apiPtyWrite = (sessionId: string, data: Uint8Array) =>
   invoke<void>("pty_write", { sessionId, data: Array.from(data) });
 
@@ -195,6 +213,24 @@ export const apiSshConnectShell = (
   };
   return invoke<string>("ssh_open_shell", {
     hostId,
+    cols,
+    rows,
+    onData: channel,
+  });
+};
+
+export const apiSshReattachShell = (
+  sessionId: string,
+  cols: number,
+  rows: number,
+  onData: (chunk: Uint8Array) => void
+): Promise<void> => {
+  const channel = new Channel<number[]>();
+  channel.onmessage = (bytes) => {
+    onData(new Uint8Array(bytes));
+  };
+  return invoke<void>("ssh_reattach_shell", {
+    sessionId,
     cols,
     rows,
     onData: channel,
@@ -288,11 +324,27 @@ export const apiTunnelStart = (tunnelId: string) =>
 export const apiTunnelStop = (tunnelId: string) =>
   invoke<void>("tunnel_stop", { tunnelId });
 
+export const apiMarkStandbyReady = () =>
+  invoke<void>("window_mark_standby_ready");
+
 export const apiPopoutTerminalWindow = (params: {
   kind: "ssh" | "local";
   hostId?: string | null;
   shellId?: string | null;
+  sessionId?: string | null;
   title: string;
   vaultKind?: string | null;
   vaultName?: string | null;
+  x?: number | null;
+  y?: number | null;
 }) => invoke<string>("window_popout_terminal", params);
+
+export const apiDockPopoutBackToMain = (params: {
+  kind: "ssh" | "local";
+  hostId?: string | null;
+  shellId?: string | null;
+  sessionId?: string | null;
+  title: string;
+  vaultKind?: string | null;
+  vaultName?: string | null;
+}) => invoke<void>("window_dock_back_to_main", params);

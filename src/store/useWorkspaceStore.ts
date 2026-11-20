@@ -10,6 +10,7 @@ import type {
   WorkspaceTab,
 } from "../types/models";
 import {
+  apiDockPopoutBackToMain,
   apiPopoutTerminalWindow,
   apiPtyWrite,
   apiSshWrite,
@@ -19,7 +20,32 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { extractSnippetVariables } from "../lib/snippets";
 import { useVaultStore } from "./useVaultStore";
 
+import {
+  consumePaneSessionHandedOff,
+  markPaneSessionHandedOff,
+  reorderTabList,
+} from "../lib/windowTabs";
+
+export {
+  consumePaneSessionHandedOff,
+  markPaneSessionHandedOff,
+  reorderTabList,
+};
+
 const uid = () => crypto.randomUUID();
+
+export const isPopoutWindowContext = (): boolean => {
+  if (typeof window === "undefined") return false;
+  const w = window as unknown as {
+    __SKYNET_POPOUT__?: unknown;
+    __SKYNET_STANDBY_POPOUT__?: boolean;
+  };
+  return (
+    Boolean(w.__SKYNET_POPOUT__) ||
+    Boolean(w.__SKYNET_STANDBY_POPOUT__) ||
+    new URLSearchParams(window.location.search).get("popout") === "1"
+  );
+};
 
 function splitTreeAtPane(
   node: SplitNode,
@@ -130,6 +156,7 @@ interface WorkspaceState {
   tabs: WorkspaceTab[];
   activeTabId: string;
   setActiveTab: (id: string) => void;
+  reorderTabs: (sourceTabId: string, targetTabId: string) => void;
   cycleTab: (dir: 1 | -1) => void;
   closeTab: (id: string) => void;
 
@@ -147,10 +174,21 @@ interface WorkspaceState {
     kind: "ssh" | "local";
     hostId?: string;
     shellProfile?: ShellProfile;
+    sessionId?: string;
     title: string;
     vaultKind?: "personal" | "team";
     vaultName?: string;
   }) => void;
+  receiveDockedTabFromPopout: (params: {
+    kind: "ssh" | "local";
+    hostId?: string;
+    shellProfile?: ShellProfile;
+    sessionId?: string;
+    title: string;
+    vaultKind?: "personal" | "team";
+    vaultName?: string;
+  }) => void;
+  dockPopoutToMain: (tabId?: string) => Promise<void>;
   dockTabIntoSplit: (
     sourceTabId: string,
     targetTabId: string,
@@ -158,8 +196,15 @@ interface WorkspaceState {
     direction: "horizontal" | "vertical"
   ) => void;
   detachPaneToTab: (tabId: string, paneId: string) => void;
-  popoutPaneToWindow: (tabId: string, paneId: string) => Promise<void>;
-  popoutTabToWindow: (tabId: string) => Promise<void>;
+  popoutPaneToWindow: (
+    tabId: string,
+    paneId: string,
+    pos?: { x: number; y: number }
+  ) => Promise<void>;
+  popoutTabToWindow: (
+    tabId: string,
+    pos?: { x: number; y: number }
+  ) => Promise<void>;
 
   splitPane: (
     tabId: string,
@@ -281,9 +326,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   setSkynetTakeoverActive: (skynetTakeoverActive) =>
     set({ skynetTakeoverActive }),
 
-  tabs: [{ id: "vault", kind: "vault", title: "Vault", pinned: true }],
-  activeTabId: "vault",
+  tabs: isPopoutWindowContext()
+    ? []
+    : [{ id: "vault", kind: "vault", title: "Vault", pinned: true }],
+  activeTabId: isPopoutWindowContext() ? "" : "vault",
   setActiveTab: (id) => set({ activeTabId: id }),
+
+  reorderTabs: (sourceTabId, targetTabId) =>
+    set((s) => ({
+      tabs: reorderTabList(s.tabs, sourceTabId, targetTabId),
+    })),
 
   cycleTab: (dir) => {
     const { tabs, activeTabId } = get();
@@ -295,12 +347,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   closeTab: (id) => {
     if (id === "vault") return;
-    const isPopout =
-      typeof window !== "undefined" &&
-      (Boolean(
-        (window as unknown as { __SKYNET_POPOUT__?: unknown }).__SKYNET_POPOUT__
-      ) ||
-        new URLSearchParams(window.location.search).get("popout") === "1");
+    const isPopout = isPopoutWindowContext();
     const remainingCount = get().tabs.filter((t) => t.id !== id).length;
     if (isPopout && remainingCount === 0) {
       if (isTauriRuntime()) {
@@ -393,6 +440,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     kind,
     hostId,
     shellProfile,
+    sessionId,
     title,
     vaultKind,
     vaultName,
@@ -405,15 +453,17 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       title,
       hostId,
       shellProfile,
+      sessionId,
       vaultKind: vaultKind ?? "personal",
       vaultName: vaultName ?? "Personal Vault",
-      connected: false,
-      connecting: true,
+      connected: Boolean(sessionId),
+      connecting: !sessionId,
     };
     const popTab: WorkspaceTab = {
       id: tabId,
       kind: "terminal",
       title,
+      subtitle: hostId ? title : undefined,
       vaultKind: vaultKind ?? "personal",
       vaultName: vaultName ?? "Personal Vault",
       rootNode: { type: "leaf", id: uid(), pane },
@@ -422,6 +472,67 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       sftpDrawerHostId: hostId,
     };
     set({ tabs: [popTab], activeTabId: tabId });
+  },
+
+  receiveDockedTabFromPopout: ({
+    kind,
+    hostId,
+    shellProfile,
+    sessionId,
+    title,
+    vaultKind,
+    vaultName,
+  }) => {
+    const paneId = uid();
+    const tabId = uid();
+    const pane: TerminalPaneConfig = {
+      id: paneId,
+      kind,
+      title,
+      hostId,
+      shellProfile,
+      sessionId,
+      vaultKind: vaultKind ?? "personal",
+      vaultName: vaultName ?? "Personal Vault",
+      connected: Boolean(sessionId),
+      connecting: !sessionId,
+    };
+    const dockedTab: WorkspaceTab = {
+      id: tabId,
+      kind: "terminal",
+      title,
+      subtitle: hostId ? title : undefined,
+      vaultKind: vaultKind ?? "personal",
+      vaultName: vaultName ?? "Personal Vault",
+      rootNode: { type: "leaf", id: uid(), pane },
+      activePaneId: paneId,
+      sftpDrawerOpen: false,
+      sftpDrawerHostId: hostId,
+    };
+    set((s) => ({ tabs: [...s.tabs, dockedTab], activeTabId: tabId }));
+  },
+
+  dockPopoutToMain: async (tabId) => {
+    if (!isTauriRuntime()) return;
+    const state = get();
+    const targetId = tabId ?? state.activeTabId;
+    const tab = state.tabs.find((t) => t.id === targetId);
+    if (!tab || tab.kind !== "terminal") return;
+    const panes = collectPanes(tab.rootNode);
+    for (const pane of panes) {
+      if (pane.sessionId) {
+        markPaneSessionHandedOff(pane.id);
+      }
+      await apiDockPopoutBackToMain({
+        kind: pane.kind,
+        hostId: pane.hostId ?? null,
+        shellId: pane.shellProfile?.id ?? null,
+        sessionId: pane.sessionId ?? null,
+        title: pane.title,
+        vaultKind: pane.vaultKind ?? null,
+        vaultName: pane.vaultName ?? null,
+      });
+    }
   },
 
   dockTabIntoSplit: (sourceTabId, targetTabId, targetPaneId, direction) => {
@@ -440,11 +551,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const srcPanes = collectPanes(srcTab.rootNode);
     let anchorPaneId = targetPaneId;
     for (const sp of srcPanes) {
+      if (sp.sessionId) {
+        markPaneSessionHandedOff(sp.id);
+      }
       get().splitPane(targetTabId, anchorPaneId, direction, {
         kind: sp.kind,
         title: sp.title,
         hostId: sp.hostId,
         shellProfile: sp.shellProfile,
+        sessionId: sp.sessionId,
         vaultKind: sp.vaultKind,
         vaultName: sp.vaultName,
       });
@@ -466,6 +581,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const pane = panes.find((p) => p.id === paneId);
     if (!pane) return;
 
+    if (pane.sessionId) {
+      markPaneSessionHandedOff(pane.id);
+    }
+
     const newPaneId = uid();
     const newTabId = uid();
     const newPane: TerminalPaneConfig = {
@@ -474,15 +593,17 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       title: pane.title,
       hostId: pane.hostId,
       shellProfile: pane.shellProfile,
+      sessionId: pane.sessionId,
       vaultKind: pane.vaultKind,
       vaultName: pane.vaultName,
-      connected: false,
-      connecting: true,
+      connected: Boolean(pane.sessionId),
+      connecting: !pane.sessionId,
     };
     const newTab: WorkspaceTab = {
       id: newTabId,
       kind: "terminal",
       title: pane.title,
+      subtitle: pane.hostId ? pane.title : undefined,
       vaultKind: pane.vaultKind,
       vaultName: pane.vaultName,
       rootNode: { type: "leaf", id: uid(), pane: newPane },
@@ -495,37 +616,50 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set((s) => ({ tabs: [...s.tabs, newTab], activeTabId: newTabId }));
   },
 
-  popoutPaneToWindow: async (tabId, paneId) => {
+  popoutPaneToWindow: async (tabId, paneId, pos) => {
     const state = get();
     const tab = state.tabs.find((t) => t.id === tabId);
     if (!tab || tab.kind !== "terminal") return;
     const pane = collectPanes(tab.rootNode).find((p) => p.id === paneId);
     if (!pane || !isTauriRuntime()) return;
 
+    if (pane.sessionId) {
+      markPaneSessionHandedOff(pane.id);
+    }
     await apiPopoutTerminalWindow({
       kind: pane.kind,
       hostId: pane.hostId ?? null,
       shellId: pane.shellProfile?.id ?? null,
+      sessionId: pane.sessionId ?? null,
       title: pane.title,
       vaultKind: pane.vaultKind ?? null,
       vaultName: pane.vaultName ?? null,
+      x: pos?.x ?? null,
+      y: pos?.y ?? null,
     });
     get().closePane(tabId, paneId);
   },
 
-  popoutTabToWindow: async (tabId) => {
+  popoutTabToWindow: async (tabId, pos) => {
     const state = get();
     const tab = state.tabs.find((t) => t.id === tabId);
     if (!tab || tab.kind !== "terminal" || !isTauriRuntime()) return;
     const panes = collectPanes(tab.rootNode);
-    for (const pane of panes) {
+    for (let i = 0; i < panes.length; i++) {
+      const pane = panes[i];
+      if (pane.sessionId) {
+        markPaneSessionHandedOff(pane.id);
+      }
       await apiPopoutTerminalWindow({
         kind: pane.kind,
         hostId: pane.hostId ?? null,
         shellId: pane.shellProfile?.id ?? null,
+        sessionId: pane.sessionId ?? null,
         title: pane.title,
         vaultKind: pane.vaultKind ?? null,
         vaultName: pane.vaultName ?? null,
+        x: pos ? pos.x + i * 28 : null,
+        y: pos ? pos.y + i * 28 : null,
       });
     }
     get().closeTab(tabId);
@@ -536,8 +670,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const fullPane: TerminalPaneConfig = {
       ...partialPane,
       id: newPaneId,
-      connected: false,
-      connecting: true,
+      connected: Boolean(partialPane.sessionId),
+      connecting: !partialPane.sessionId,
     };
     set((state) => ({
       tabs: state.tabs.map((tab) => {

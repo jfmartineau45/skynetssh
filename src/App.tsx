@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { TitleBar } from "./components/chrome/TitleBar";
 import { CommandPalette } from "./components/chrome/CommandPalette";
 import { HostKeyModal } from "./components/chrome/HostKeyModal";
@@ -9,10 +10,36 @@ import { VaultUnlockModal } from "./components/vault/VaultUnlockModal";
 import { VaultDashboard } from "./components/vault/VaultDashboard";
 import { SessionTabView } from "./components/terminal/SessionTabView";
 import { SftpDualPaneTab } from "./components/sftp/SftpDualPaneTab";
-import { useWorkspaceStore } from "./store/useWorkspaceStore";
+import {
+  useWorkspaceStore,
+  isPopoutWindowContext,
+} from "./store/useWorkspaceStore";
 import { useVaultStore } from "./store/useVaultStore";
-import { apiDiscoverShells, isTauriRuntime } from "./lib/ipc";
-import type { HostKeyPromptEvent } from "./types/models";
+import {
+  apiDiscoverShells,
+  apiMarkStandbyReady,
+  isTauriRuntime,
+} from "./lib/ipc";
+import type { HostKeyPromptEvent, ShellProfile } from "./types/models";
+
+interface PopoutActivationPayload {
+  targetWindow?: string | null;
+  kind?: string;
+  hostId?: string | null;
+  shellId?: string | null;
+  sessionId?: string | null;
+  title?: string;
+  vaultKind?: string;
+  vaultName?: string;
+}
+
+const FALLBACK_PWSH: ShellProfile = {
+  id: "powershell",
+  name: "Windows PowerShell",
+  executable: "powershell.exe",
+  args: ["-NoLogo"],
+  icon: "powershell",
+};
 
 export const App: React.FC = () => {
   const {
@@ -25,21 +52,28 @@ export const App: React.FC = () => {
     closeTab,
     openLocalTerminal,
     initPopoutWorkspace,
+    receiveDockedTabFromPopout,
+    popoutTabToWindow,
+    dockPopoutToMain,
     adjustFontSize,
   } = useWorkspaceStore();
 
-  const popoutParams = useMemo(() => {
+  const isPopout = useMemo(() => isPopoutWindowContext(), []);
+  const isStandbyBoot = useMemo(() => {
+    if (typeof window === "undefined") return false;
+    const w = window as unknown as {
+      __SKYNET_STANDBY_POPOUT__?: boolean;
+      __SKYNET_POPOUT__?: PopoutActivationPayload;
+    };
+    return Boolean(w.__SKYNET_STANDBY_POPOUT__) && !w.__SKYNET_POPOUT__;
+  }, []);
+  const [standbyActivated, setStandbyActivated] = useState(!isStandbyBoot);
+
+  const initialPopoutParams = useMemo(() => {
     if (typeof window === "undefined") return null;
     const injected = (
       window as unknown as {
-        __SKYNET_POPOUT__?: {
-          kind?: string;
-          hostId?: string | null;
-          shellId?: string | null;
-          title?: string;
-          vaultKind?: string;
-          vaultName?: string;
-        };
+        __SKYNET_POPOUT__?: PopoutActivationPayload;
       }
     ).__SKYNET_POPOUT__;
     if (injected) {
@@ -47,6 +81,7 @@ export const App: React.FC = () => {
         kind: (injected.kind === "local" ? "local" : "ssh") as "ssh" | "local",
         hostId: injected.hostId || undefined,
         shellId: injected.shellId || undefined,
+        sessionId: injected.sessionId || undefined,
         title: injected.title || "Terminal",
         vaultKind: (injected.vaultKind === "team" ? "team" : "personal") as
           | "personal"
@@ -60,6 +95,7 @@ export const App: React.FC = () => {
       kind: (p.get("kind") === "local" ? "local" : "ssh") as "ssh" | "local",
       hostId: p.get("hostId") || undefined,
       shellId: p.get("shellId") || undefined,
+      sessionId: p.get("sessionId") || undefined,
       title: p.get("title") || "Terminal",
       vaultKind: (p.get("vaultKind") === "team" ? "team" : "personal") as
         | "personal"
@@ -78,38 +114,96 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     if (!isTauriRuntime()) {
-      setShells([
-        {
-          id: "pwsh",
-          name: "PowerShell",
-          executable: "powershell.exe",
-          args: ["-NoLogo"],
-          icon: "powershell",
-        },
-      ]);
+      setShells([FALLBACK_PWSH]);
       return;
+    }
+
+    // Mount popped-out session IMMEDIATELY without waiting on WSL/shell discovery (~400ms saved!)
+    if (initialPopoutParams) {
+      const existingShells = useWorkspaceStore.getState().shells;
+      const matchedShell =
+        existingShells.find((s) => s.id === initialPopoutParams.shellId) ??
+        existingShells[0] ??
+        FALLBACK_PWSH;
+      initPopoutWorkspace({
+        kind: initialPopoutParams.kind,
+        hostId: initialPopoutParams.hostId,
+        shellProfile:
+          initialPopoutParams.kind === "local" ? matchedShell : undefined,
+        sessionId: initialPopoutParams.sessionId,
+        title: initialPopoutParams.title,
+        vaultKind: initialPopoutParams.vaultKind,
+        vaultName: initialPopoutParams.vaultName,
+      });
     }
 
     refreshStatus();
     apiDiscoverShells()
       .then((discovered) => {
         setShells(discovered);
-        if (popoutParams) {
-          const matchedShell =
-            discovered.find((s) => s.id === popoutParams.shellId) ??
-            discovered[0];
-          initPopoutWorkspace({
-            kind: popoutParams.kind,
-            hostId: popoutParams.hostId,
-            shellProfile:
-              popoutParams.kind === "local" ? matchedShell : undefined,
-            title: popoutParams.title,
-            vaultKind: popoutParams.vaultKind,
-            vaultName: popoutParams.vaultName,
-          });
-        }
       })
       .catch(() => {});
+
+    const currentLabel = getCurrentWindow().label;
+
+    // Pre-warmed standby pop-out activation (<15ms zero-pause handoff!)
+    const unlistenActivate = listen<PopoutActivationPayload>(
+      "skynet-activate-popout",
+      (ev) => {
+        const p = ev.payload;
+        if (p.targetWindow && p.targetWindow !== currentLabel) return;
+        (
+          window as unknown as { __SKYNET_POPOUT__?: PopoutActivationPayload }
+        ).__SKYNET_POPOUT__ = p;
+        setStandbyActivated(true);
+        const curShells = useWorkspaceStore.getState().shells;
+        const kind = p.kind === "local" ? "local" : "ssh";
+        const matched =
+          curShells.find((s) => s.id === p.shellId) ??
+          curShells[0] ??
+          FALLBACK_PWSH;
+        initPopoutWorkspace({
+          kind,
+          hostId: p.hostId || undefined,
+          shellProfile: kind === "local" ? matched : undefined,
+          sessionId: p.sessionId || undefined,
+          title: p.title || "Terminal",
+          vaultKind: p.vaultKind === "team" ? "team" : "personal",
+          vaultName: p.vaultName || "Personal Vault",
+        });
+        refreshStatus().catch(() => {});
+      }
+    );
+
+    if (isStandbyBoot) {
+      unlistenActivate
+        .then(() => apiMarkStandbyReady())
+        .catch(() => {});
+    }
+
+    // Receive popped-out terminal docked back into the Main window
+    const unlistenDockBack = listen<PopoutActivationPayload>(
+      "skynet-dock-from-popout",
+      (ev) => {
+        if (currentLabel !== "main") return;
+        const p = ev.payload;
+        const curShells = useWorkspaceStore.getState().shells;
+        const kind = p.kind === "local" ? "local" : "ssh";
+        const matched =
+          curShells.find((s) => s.id === p.shellId) ??
+          curShells[0] ??
+          FALLBACK_PWSH;
+        receiveDockedTabFromPopout({
+          kind,
+          hostId: p.hostId || undefined,
+          shellProfile: kind === "local" ? matched : undefined,
+          sessionId: p.sessionId || undefined,
+          title: p.title || "Terminal",
+          vaultKind: p.vaultKind === "team" ? "team" : "personal",
+          vaultName: p.vaultName || "Personal Vault",
+        });
+      }
+    );
 
     const unlistenHostKey = listen<HostKeyPromptEvent>(
       "ssh-host-key-prompt",
@@ -128,10 +222,21 @@ export const App: React.FC = () => {
     });
 
     return () => {
+      unlistenActivate.then((u) => u());
+      unlistenDockBack.then((u) => u());
       unlistenHostKey.then((u) => u());
       unlistenExternalSync.then((u) => u());
     };
-  }, [refreshStatus, reloadSnapshot, setShells, enqueueHostKeyPrompt]);
+  }, [
+    refreshStatus,
+    reloadSnapshot,
+    setShells,
+    enqueueHostKeyPrompt,
+    initPopoutWorkspace,
+    receiveDockedTabFromPopout,
+    initialPopoutParams,
+    isStandbyBoot,
+  ]);
 
   // Global Tabby Keyboard Shortcuts (TUI-Safe: never steals nano/vim/bash/tmux control codes!)
   useEffect(() => {
@@ -181,7 +286,14 @@ export const App: React.FC = () => {
         }
       }
 
-      // Ctrl+Shift+T (New Local Shell), Ctrl+Shift+W (Close Tab), Ctrl+Shift+N (New Vault Host)
+      // Alt+Shift+P -> Toggle Always-on-Top Pin on current window
+      if (e.altKey && e.shiftKey && !e.ctrlKey && e.key.toLowerCase() === "p") {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent("skynet-toggle-pin"));
+        return;
+      }
+
+      // Ctrl+Shift+T (New Local Shell), Ctrl+Shift+W (Close Tab), Ctrl+Shift+N (New Vault Host), Ctrl+Shift+O (Pop Out / Dock Back)
       if (e.ctrlKey && e.shiftKey && !e.altKey) {
         const k = e.key.toLowerCase();
         if (k === "t" && shells[0]) {
@@ -190,7 +302,17 @@ export const App: React.FC = () => {
         } else if (k === "w" && activeTabId !== "vault") {
           e.preventDefault();
           closeTab(activeTabId);
-        } else if (k === "n") {
+        } else if (k === "o") {
+          const curTab = tabs.find((t) => t.id === activeTabId);
+          if (curTab?.kind === "terminal") {
+            e.preventDefault();
+            if (isPopout) {
+              void dockPopoutToMain(activeTabId);
+            } else {
+              void popoutTabToWindow(activeTabId);
+            }
+          }
+        } else if (k === "n" && !isPopout) {
           e.preventDefault();
           setActiveSection("hosts");
           setActiveTab("vault");
@@ -205,10 +327,13 @@ export const App: React.FC = () => {
     tabs,
     shells,
     activeTabId,
+    isPopout,
     setActiveTab,
     cycleTab,
     closeTab,
     openLocalTerminal,
+    popoutTabToWindow,
+    dockPopoutToMain,
     adjustFontSize,
     setActiveSection,
     setNewHostDrawerRequested,
@@ -216,7 +341,7 @@ export const App: React.FC = () => {
 
   return (
     <div className="flex flex-col w-screen h-screen overflow-hidden bg-[var(--bg-app)] text-[var(--text-primary)] border border-[var(--border-subtle)]">
-      <TitleBar isPopout={Boolean(popoutParams)} />
+      <TitleBar isPopout={isPopout} />
 
       {/* Keep terminal & SFTP tabs mounted when switching tabs so xterm WebGL buffers & scrollback stay alive! */}
       <div className="relative flex-1 min-h-0 overflow-hidden">
@@ -236,11 +361,11 @@ export const App: React.FC = () => {
         })}
       </div>
 
-      <SkynetEffectsOverlay />
-      <VaultUnlockModal />
-      <HostKeyModal />
-      <SnippetPromptModal />
-      <CommandPalette />
+      {standbyActivated && <SkynetEffectsOverlay />}
+      {standbyActivated && <VaultUnlockModal />}
+      {standbyActivated && <HostKeyModal />}
+      {standbyActivated && <SnippetPromptModal />}
+      {standbyActivated && <CommandPalette />}
     </div>
   );
 };

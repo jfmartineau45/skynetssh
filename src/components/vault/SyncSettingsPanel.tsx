@@ -28,12 +28,34 @@ import {
 } from "../../lib/ipc";
 
 const HOTKEY_PRESETS = [
-  { value: "CommandOrControl+Backquote", label: "Ctrl + ` (Tabby Quake Default)" },
+  { value: "CommandOrControl+Backquote", label: "Ctrl + ` (Quake Bring-to-Front Default)" },
   { value: "Alt+Backquote", label: "Alt + `" },
+  { value: "CommandOrControl+Shift+Backquote", label: "Ctrl + Shift + `" },
   { value: "CommandOrControl+Shift+Space", label: "Ctrl + Shift + Space" },
+  { value: "CommandOrControl+Alt+S", label: "Ctrl + Alt + S" },
   { value: "F12", label: "F12 (Guake / Yakuake Style)" },
   { value: "Disabled", label: "Disabled" },
 ];
+
+function formatRecordedAccelerator(e: KeyboardEvent): string | null {
+  if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return null;
+  const parts: string[] = [];
+  if (e.ctrlKey || e.metaKey) parts.push("CommandOrControl");
+  if (e.altKey) parts.push("Alt");
+  if (e.shiftKey) parts.push("Shift");
+  if (parts.length === 0 && !/^F([1-9]|1[0-2])$/.test(e.key)) return null;
+
+  let keyToken = "";
+  if (e.code === "Backquote") keyToken = "Backquote";
+  else if (e.code === "Space") keyToken = "Space";
+  else if (e.code.startsWith("Key")) keyToken = e.code.slice(3);
+  else if (e.code.startsWith("Digit")) keyToken = e.code.slice(5);
+  else if (/^F([1-9]|1[0-2])$/.test(e.code)) keyToken = e.code;
+  else return null;
+
+  parts.push(keyToken);
+  return parts.join("+");
+}
 
 export const SyncSettingsPanel: React.FC = () => {
   const {
@@ -74,6 +96,27 @@ export const SyncSettingsPanel: React.FC = () => {
   const [remoteUrl, setRemoteUrl] = useState("");
   const [syncBusy, setSyncBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [recordingHotkey, setRecordingHotkey] = useState(false);
+
+  useEffect(() => {
+    if (!recordingHotkey) return;
+    const onKey = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === "Escape") {
+        setRecordingHotkey(false);
+        return;
+      }
+      const accel = formatRecordedAccelerator(e);
+      if (!accel) return;
+      setRecordingHotkey(false);
+      setGlobalHotkey(accel)
+        .then(() => setMessage(`Global Bring-to-Front shortcut set to ${accel}`))
+        .catch((err) => setMessage(`Hotkey error: ${String(err)}`));
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [recordingHotkey, setGlobalHotkey]);
 
   const [newProfileName, setNewProfileName] = useState("");
   const [newProfileKind, setNewProfileKind] = useState<"team" | "personal">("team");
@@ -546,26 +589,59 @@ export const SyncSettingsPanel: React.FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-2">
             <label className="block text-xs font-medium text-[var(--text-secondary)]">
-              Global Bring-to-Front / Quake Toggle Hotkey
+              Global Bring-to-Front / Quake Toggle Hotkey (Main + Pop-Out Windows)
             </label>
-            <select
-              value={status?.globalHotkey ?? "CommandOrControl+Backquote"}
-              onChange={async (e) => {
-                try {
-                  await setGlobalHotkey(e.target.value);
-                  setMessage(`Global hotkey set to ${e.target.value}`);
-                } catch (err) {
-                  setMessage(`Hotkey error: ${String(err)}`);
+            <div className="flex items-center gap-2">
+              <select
+                value={
+                  HOTKEY_PRESETS.some(
+                    (hp) =>
+                      hp.value ===
+                      (status?.globalHotkey ?? "CommandOrControl+Backquote")
+                  )
+                    ? status?.globalHotkey ?? "CommandOrControl+Backquote"
+                    : "__custom__"
                 }
-              }}
-              className="w-full px-3 py-2 rounded-lg bg-black/40 border border-[var(--border-subtle)] text-xs text-white"
-            >
-              {HOTKEY_PRESETS.map((hp) => (
-                <option key={hp.value} value={hp.value}>
-                  {hp.label}
-                </option>
-              ))}
-            </select>
+                onChange={async (e) => {
+                  if (e.target.value === "__custom__") return;
+                  try {
+                    await setGlobalHotkey(e.target.value);
+                    setMessage(`Global hotkey set to ${e.target.value}`);
+                  } catch (err) {
+                    setMessage(`Hotkey error: ${String(err)}`);
+                  }
+                }}
+                className="flex-1 px-3 py-2 rounded-lg bg-black/40 border border-[var(--border-subtle)] text-xs text-white"
+              >
+                {!HOTKEY_PRESETS.some(
+                  (hp) =>
+                    hp.value ===
+                    (status?.globalHotkey ?? "CommandOrControl+Backquote")
+                ) &&
+                  status?.globalHotkey && (
+                    <option value="__custom__">
+                      Custom: {status.globalHotkey}
+                    </option>
+                  )}
+                {HOTKEY_PRESETS.map((hp) => (
+                  <option key={hp.value} value={hp.value}>
+                    {hp.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => setRecordingHotkey((v) => !v)}
+                className={`px-3 py-2 rounded-lg border text-xs font-semibold shrink-0 transition ${
+                  recordingHotkey
+                    ? "bg-amber-500/25 border-amber-400 text-amber-200 animate-pulse"
+                    : "bg-white/5 hover:bg-white/10 border-[var(--border-subtle)] text-white"
+                }`}
+                title="Click then press any modifier + key combination (Esc to cancel)"
+              >
+                {recordingHotkey ? "Press keys..." : "Record Key"}
+              </button>
+            </div>
 
             <div className="flex items-center justify-between pt-2 text-xs">
               <span className="text-[var(--text-secondary)]">
@@ -657,6 +733,8 @@ export const SyncSettingsPanel: React.FC = () => {
             </label>
             <div className="pt-2 border-t border-[var(--border-subtle)] grid grid-cols-2 gap-y-1 text-[11px] text-[var(--text-muted)] font-mono">
               <span>Ctrl+` : Bring to Front</span>
+              <span>Ctrl+Shift+O : Pop Out / Dock</span>
+              <span>Alt+Shift+P : Pin on Top</span>
               <span>Ctrl+Shift+P : Command</span>
               <span>Ctrl+Shift+T : New Shell</span>
               <span>Ctrl+Shift+N : New Host</span>

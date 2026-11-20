@@ -21,15 +21,22 @@ import {
   Zap,
 } from "lucide-react";
 import type { TerminalPaneConfig } from "../../types/models";
-import { useWorkspaceStore, collectPanes } from "../../store/useWorkspaceStore";
+import {
+  useWorkspaceStore,
+  collectPanes,
+  consumePaneSessionHandedOff,
+  isPopoutWindowContext,
+} from "../../store/useWorkspaceStore";
 import { useVaultStore } from "../../store/useVaultStore";
 import { APP_THEMES } from "../../lib/themes";
 import {
   apiPtyClose,
+  apiPtyReattach,
   apiPtyResize,
   apiPtySpawn,
   apiSshClose,
   apiSshConnectShell,
+  apiSshReattachShell,
   apiSshResize,
   isTauriRuntime,
 } from "../../lib/ipc";
@@ -157,8 +164,35 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
 
       const cols = Math.max(20, term.cols || 80);
       const rows = Math.max(5, term.rows || 24);
+      const existingSid = connectNonce === 0 ? paneRef.current.sessionId : undefined;
 
       try {
+        // Zero-pause live session handoff (Pop-Out, Dock Back, Split Dock, Un-Split):
+        // Reattach to the running SSH / ConPTY channel + replay its 64 KB output ring buffer!
+        if (existingSid) {
+          try {
+            if (pane.kind === "ssh") {
+              await apiSshReattachShell(existingSid, cols, rows, (bytes) => {
+                term.write(bytes);
+              });
+            } else {
+              await apiPtyReattach(existingSid, cols, rows, (bytes) => {
+                term.write(bytes);
+              });
+            }
+            sessionIdRef.current = existingSid;
+            updatePane(tabId, pane.id, {
+              sessionId: existingSid,
+              connecting: false,
+              connected: true,
+              error: null,
+            });
+            return;
+          } catch {
+            // Session had already terminated — fall through cleanly to open a fresh shell
+          }
+        }
+
         if (pane.kind === "ssh" && pane.hostId) {
           const host = hosts.find((h) => h.id === pane.hostId);
           term.writeln(
@@ -284,7 +318,14 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
       // TUI-Safe App Shortcuts: NEVER hijack bare Ctrl+<letter>, Ctrl+-/_, or bare Alt+<key>
       // used by nano, vim, bash/readline, tmux, screen, htop, or mc!
       if (
-        (ev.ctrlKey && ev.shiftKey && !ev.altKey && ["p", "t", "w", "n"].includes(ev.key.toLowerCase())) ||
+        (ev.ctrlKey &&
+          ev.shiftKey &&
+          !ev.altKey &&
+          ["p", "t", "w", "n", "o"].includes(ev.key.toLowerCase())) ||
+        (ev.altKey &&
+          ev.shiftKey &&
+          !ev.ctrlKey &&
+          ev.key.toLowerCase() === "p") ||
         (ev.ctrlKey && !ev.altKey && ev.key === "Tab") ||
         (ev.ctrlKey && ev.altKey && /^[1-9]$/.test(ev.key)) ||
         (ev.ctrlKey && ev.altKey && ["=", "+", "-", "0"].includes(ev.key))
@@ -400,7 +441,8 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
       dataDisposable.dispose();
       const sid = sessionIdRef.current;
       sessionIdRef.current = null;
-      if (sid && isTauriRuntime()) {
+      const wasHandedOff = consumePaneSessionHandedOff(paneRef.current.id);
+      if (sid && !wasHandedOff && isTauriRuntime()) {
         if (paneRef.current.kind === "ssh") {
           apiSshClose(sid).catch(() => {});
         } else {
@@ -601,20 +643,23 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
               <PanelTop className="w-3 h-3" />
             </button>
           )}
-          {isTauriRuntime() && (
+          {isTauriRuntime() && (!isPopoutWindowContext() || siblingPaneCount > 1) && (
             <button
               onClick={(e) => {
                 e.stopPropagation();
                 void popoutPaneToWindow(tabId, pane.id);
               }}
               className="p-1 rounded text-[var(--text-secondary)] hover:text-sky-300 hover:bg-sky-500/15 transition"
-              title="Pop out terminal into its own standalone OS window"
+              title="Pop out terminal into its own standalone window (Ctrl+Shift+O)"
             >
               <ExternalLink className="w-3 h-3" />
             </button>
           )}
           <button
-            onClick={() => setConnectNonce((n) => n + 1)}
+            onClick={() => {
+              updatePane(tabId, pane.id, { sessionId: undefined });
+              setConnectNonce((n) => n + 1);
+            }}
             className="p-1 rounded text-[var(--text-secondary)] hover:text-white hover:bg-white/10 transition"
             title="Reconnect session"
           >
