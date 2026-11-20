@@ -26,11 +26,25 @@ struct ActivePtySession {
 #[derive(Default, Clone)]
 pub struct PtyManager {
     sessions: Arc<Mutex<HashMap<String, ActivePtySession>>>,
+    cached_shells: Arc<Mutex<Option<Vec<ShellProfile>>>>,
 }
 
 impl PtyManager {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn discover_shells_cached(&self) -> Vec<ShellProfile> {
+        if let Ok(guard) = self.cached_shells.lock() {
+            if let Some(ref existing) = *guard {
+                return existing.clone();
+            }
+        }
+        let discovered = Self::discover_shells();
+        if let Ok(mut guard) = self.cached_shells.lock() {
+            *guard = Some(discovered.clone());
+        }
+        discovered
     }
 
     pub fn discover_shells() -> Vec<ShellProfile> {
@@ -84,8 +98,15 @@ impl PtyManager {
             icon: "cmd".into(),
         });
 
-        // 5. WSL2 Distributions
-        if let Ok(output) = Command::new("wsl.exe").args(["-l", "-q"]).output() {
+        // 5. WSL2 Distributions (CREATE_NO_WINDOW so ConHost never stalls or flashes!)
+        let mut wsl_cmd = Command::new("wsl.exe");
+        wsl_cmd.args(["-l", "-q"]);
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            wsl_cmd.creation_flags(0x0800_0000);
+        }
+        if let Ok(output) = wsl_cmd.output() {
             if output.status.success() {
                 // WSL outputs UTF-16LE on Windows
                 let u16s: Vec<u16> = output

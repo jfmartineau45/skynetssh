@@ -29,3 +29,20 @@ export function reorderTabList(
   next.splice(toIdx, 0, moved);
   return next;
 }
+
+let standbyListenerReady = false;
+let standbyXtermReady = false;
+let standbySignaled = false;
+
+export function notifyStandbyMilestone(
+  milestone: "listener" | "xterm",
+  onBothReady: () => void
+): void {
+  if (milestone === "listener") standbyListenerReady = true;
+  if (milestone === "xterm") standbyXtermReady = true;
+  if (standbyListenerReady && standbyXtermReady && !standbySignaled) {
+    standbySignaled = true;
+    onBothReady();
+  }
+}
+

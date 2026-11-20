@@ -47,6 +47,45 @@ export const isPopoutWindowContext = (): boolean => {
   );
 };
 
+export const isStandbyPopoutBoot = (): boolean => {
+  if (typeof window === "undefined") return false;
+  const w = window as unknown as {
+    __SKYNET_POPOUT__?: unknown;
+    __SKYNET_STANDBY_POPOUT__?: boolean;
+  };
+  return Boolean(w.__SKYNET_STANDBY_POPOUT__) && !w.__SKYNET_POPOUT__;
+};
+
+const WARM_POPOUT_TAB_ID = "popout-warm-tab";
+const WARM_POPOUT_PANE_ID = "popout-warm-pane";
+
+function buildInitialTabs(): WorkspaceTab[] {
+  if (isStandbyPopoutBoot()) {
+    const warmPane: TerminalPaneConfig = {
+      id: WARM_POPOUT_PANE_ID,
+      kind: "local",
+      title: "Terminal",
+      standbyWarm: true,
+      connected: true,
+      connecting: false,
+    };
+    return [
+      {
+        id: WARM_POPOUT_TAB_ID,
+        kind: "terminal",
+        title: "Terminal",
+        rootNode: { type: "leaf", id: "popout-warm-leaf", pane: warmPane },
+        activePaneId: WARM_POPOUT_PANE_ID,
+        sftpDrawerOpen: false,
+      },
+    ];
+  }
+  if (isPopoutWindowContext()) {
+    return [];
+  }
+  return [{ id: "vault", kind: "vault", title: "Vault", pinned: true }];
+}
+
 function splitTreeAtPane(
   node: SplitNode,
   targetPaneId: string,
@@ -199,11 +238,11 @@ interface WorkspaceState {
   popoutPaneToWindow: (
     tabId: string,
     paneId: string,
-    pos?: { x: number; y: number }
+    pos?: { x?: number; y?: number; tearOffDrag?: boolean }
   ) => Promise<void>;
   popoutTabToWindow: (
     tabId: string,
-    pos?: { x: number; y: number }
+    pos?: { x?: number; y?: number; tearOffDrag?: boolean }
   ) => Promise<void>;
 
   splitPane: (
@@ -326,10 +365,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   setSkynetTakeoverActive: (skynetTakeoverActive) =>
     set({ skynetTakeoverActive }),
 
-  tabs: isPopoutWindowContext()
-    ? []
-    : [{ id: "vault", kind: "vault", title: "Vault", pinned: true }],
-  activeTabId: isPopoutWindowContext() ? "" : "vault",
+  tabs: buildInitialTabs(),
+  activeTabId: isStandbyPopoutBoot()
+    ? WARM_POPOUT_TAB_ID
+    : isPopoutWindowContext()
+    ? ""
+    : "vault",
   setActiveTab: (id) => set({ activeTabId: id }),
 
   reorderTabs: (sourceTabId, targetTabId) =>
@@ -445,8 +486,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     vaultKind,
     vaultName,
   }) => {
-    const paneId = uid();
-    const tabId = uid();
+    // Reuse pre-mounted warm XTerm + WebGL tab/pane IDs in-place so React performs ZERO remount!
+    const existingWarm = get().tabs[0]?.id === WARM_POPOUT_TAB_ID;
+    const paneId = existingWarm ? WARM_POPOUT_PANE_ID : uid();
+    const tabId = existingWarm ? WARM_POPOUT_TAB_ID : uid();
+    const leafId = existingWarm ? "popout-warm-leaf" : uid();
     const pane: TerminalPaneConfig = {
       id: paneId,
       kind,
@@ -454,6 +498,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       hostId,
       shellProfile,
       sessionId,
+      standbyWarm: false,
       vaultKind: vaultKind ?? "personal",
       vaultName: vaultName ?? "Personal Vault",
       connected: Boolean(sessionId),
@@ -466,7 +511,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       subtitle: hostId ? title : undefined,
       vaultKind: vaultKind ?? "personal",
       vaultName: vaultName ?? "Personal Vault",
-      rootNode: { type: "leaf", id: uid(), pane },
+      rootNode: { type: "leaf", id: leafId, pane },
       activePaneId: paneId,
       sftpDrawerOpen: false,
       sftpDrawerHostId: hostId,
@@ -626,6 +671,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     if (pane.sessionId) {
       markPaneSessionHandedOff(pane.id);
     }
+    // Remove from source window immediately so tear-off feels instantaneous!
+    get().closePane(tabId, paneId);
     await apiPopoutTerminalWindow({
       kind: pane.kind,
       hostId: pane.hostId ?? null,
@@ -636,8 +683,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       vaultName: pane.vaultName ?? null,
       x: pos?.x ?? null,
       y: pos?.y ?? null,
+      tearOffDrag: pos?.tearOffDrag ?? false,
     });
-    get().closePane(tabId, paneId);
   },
 
   popoutTabToWindow: async (tabId, pos) => {
@@ -645,11 +692,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const tab = state.tabs.find((t) => t.id === tabId);
     if (!tab || tab.kind !== "terminal" || !isTauriRuntime()) return;
     const panes = collectPanes(tab.rootNode);
-    for (let i = 0; i < panes.length; i++) {
-      const pane = panes[i];
+    for (const pane of panes) {
       if (pane.sessionId) {
         markPaneSessionHandedOff(pane.id);
       }
+    }
+    // Detach tab from source window synchronously on frame 0!
+    get().closeTab(tabId);
+    for (let i = 0; i < panes.length; i++) {
+      const pane = panes[i];
       await apiPopoutTerminalWindow({
         kind: pane.kind,
         hostId: pane.hostId ?? null,
@@ -658,11 +709,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         title: pane.title,
         vaultKind: pane.vaultKind ?? null,
         vaultName: pane.vaultName ?? null,
-        x: pos ? pos.x + i * 28 : null,
-        y: pos ? pos.y + i * 28 : null,
+        x: pos?.x != null ? pos.x + i * 28 : null,
+        y: pos?.y != null ? pos.y + i * 28 : null,
+        tearOffDrag: i === 0 ? (pos?.tearOffDrag ?? false) : false,
       });
     }
-    get().closeTab(tabId);
   },
 
   splitPane: (tabId, targetPaneId, direction, partialPane) => {

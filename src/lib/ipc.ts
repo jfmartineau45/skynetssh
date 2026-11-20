@@ -337,6 +337,7 @@ export const apiPopoutTerminalWindow = (params: {
   vaultName?: string | null;
   x?: number | null;
   y?: number | null;
+  tearOffDrag?: boolean | null;
 }) => invoke<string>("window_popout_terminal", params);
 
 export const apiDockPopoutBackToMain = (params: {

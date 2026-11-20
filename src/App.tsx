@@ -14,6 +14,7 @@ import {
   useWorkspaceStore,
   isPopoutWindowContext,
 } from "./store/useWorkspaceStore";
+import { notifyStandbyMilestone } from "./lib/windowTabs";
 import { useVaultStore } from "./store/useVaultStore";
 import {
   apiDiscoverShells,
@@ -137,16 +138,18 @@ export const App: React.FC = () => {
       });
     }
 
-    refreshStatus();
-    apiDiscoverShells()
-      .then((discovered) => {
-        setShells(discovered);
-      })
-      .catch(() => {});
+    if (!isStandbyBoot) {
+      refreshStatus();
+      apiDiscoverShells()
+        .then((discovered) => {
+          setShells(discovered);
+        })
+        .catch(() => {});
+    }
 
     const currentLabel = getCurrentWindow().label;
 
-    // Pre-warmed standby pop-out activation (<15ms zero-pause handoff!)
+    // Pre-warmed standby pop-out activation (<10ms zero-pause handoff onto hot XTerm + WebGL!)
     const unlistenActivate = listen<PopoutActivationPayload>(
       "skynet-activate-popout",
       (ev) => {
@@ -171,13 +174,23 @@ export const App: React.FC = () => {
           vaultKind: p.vaultKind === "team" ? "team" : "personal",
           vaultName: p.vaultName || "Personal Vault",
         });
-        refreshStatus().catch(() => {});
+        // Defer non-critical metadata hydration until after window is visible & interactive
+        setTimeout(() => {
+          refreshStatus().catch(() => {});
+          apiDiscoverShells()
+            .then((discovered) => setShells(discovered))
+            .catch(() => {});
+        }, 120);
       }
     );
 
     if (isStandbyBoot) {
       unlistenActivate
-        .then(() => apiMarkStandbyReady())
+        .then(() => {
+          notifyStandbyMilestone("listener", () => {
+            apiMarkStandbyReady().catch(() => {});
+          });
+        })
         .catch(() => {});
     }
 

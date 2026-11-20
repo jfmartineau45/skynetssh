@@ -27,9 +27,11 @@ import {
   consumePaneSessionHandedOff,
   isPopoutWindowContext,
 } from "../../store/useWorkspaceStore";
+import { notifyStandbyMilestone } from "../../lib/windowTabs";
 import { useVaultStore } from "../../store/useVaultStore";
 import { APP_THEMES } from "../../lib/themes";
 import {
+  apiMarkStandbyReady,
   apiPtyClose,
   apiPtyReattach,
   apiPtyResize,
@@ -79,6 +81,7 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
   const fitRef = useRef<FitAddon | null>(null);
   const searchRef = useRef<SearchAddon | null>(null);
   const sessionIdRef = useRef<string | null>(null);
+  const wasStandbyWarmRef = useRef<boolean>(Boolean(pane.standbyWarm));
   const paneRef = useRef<TerminalPaneConfig>(pane);
   paneRef.current = pane;
 
@@ -148,15 +151,16 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
 
   const startBackendSession = useCallback(
     async (term: XTerm) => {
+      const curPane = paneRef.current;
       if (!isTauriRuntime()) {
         term.writeln(
           "\x1b[1;31m[SKYNET//SSH]\x1b[0m Preview mode (run inside Tauri desktop shell for live SSH & ConPTY)."
         );
-        updatePane(tabId, pane.id, { connecting: false, connected: true });
+        updatePane(tabId, curPane.id, { connecting: false, connected: true });
         return;
       }
 
-      updatePane(tabId, pane.id, {
+      updatePane(tabId, curPane.id, {
         connecting: true,
         connected: false,
         error: null,
@@ -164,14 +168,14 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
 
       const cols = Math.max(20, term.cols || 80);
       const rows = Math.max(5, term.rows || 24);
-      const existingSid = connectNonce === 0 ? paneRef.current.sessionId : undefined;
+      const existingSid = connectNonce === 0 ? curPane.sessionId : undefined;
 
       try {
         // Zero-pause live session handoff (Pop-Out, Dock Back, Split Dock, Un-Split):
         // Reattach to the running SSH / ConPTY channel + replay its 64 KB output ring buffer!
         if (existingSid) {
           try {
-            if (pane.kind === "ssh") {
+            if (curPane.kind === "ssh") {
               await apiSshReattachShell(existingSid, cols, rows, (bytes) => {
                 term.write(bytes);
               });
@@ -181,41 +185,45 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
               });
             }
             sessionIdRef.current = existingSid;
-            updatePane(tabId, pane.id, {
+            updatePane(tabId, curPane.id, {
               sessionId: existingSid,
               connecting: false,
               connected: true,
               error: null,
             });
+            term.focus();
             return;
           } catch {
             // Session had already terminated — fall through cleanly to open a fresh shell
           }
         }
 
-        if (pane.kind === "ssh" && pane.hostId) {
-          const host = hosts.find((h) => h.id === pane.hostId);
+        if (curPane.kind === "ssh" && curPane.hostId) {
+          const curHosts = useVaultStore.getState().hosts;
+          const curSnippets = useVaultStore.getState().snippets;
+          const host = curHosts.find((h) => h.id === curPane.hostId);
           term.writeln(
             `\x1b[90m[SKYNET//SSH] Establishing encrypted link to ${
-              host ? `${host.username}@${host.address}:${host.port}` : pane.title
+              host ? `${host.username}@${host.address}:${host.port}` : curPane.title
             }...\x1b[0m`
           );
-          const sid = await apiSshConnectShell(pane.hostId, cols, rows, (bytes) => {
+          const sid = await apiSshConnectShell(curPane.hostId, cols, rows, (bytes) => {
             term.write(bytes);
           });
           sessionIdRef.current = sid;
-          updatePane(tabId, pane.id, {
+          updatePane(tabId, curPane.id, {
             sessionId: sid,
             connecting: false,
             connected: true,
             error: null,
           });
+          term.focus();
 
           // Run startup command or startup snippet if configured on host
           if (host) {
             const startupCmd =
               host.startupCommand ||
-              snippets.find((s) => s.id === host.startupSnippetId)?.command;
+              curSnippets.find((s) => s.id === host.startupSnippetId)?.command;
             if (startupCmd) {
               const enc = new TextEncoder();
               setTimeout(() => {
@@ -227,9 +235,10 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
             }
           }
         } else {
+          const curShells = useWorkspaceStore.getState().shells;
           const profile =
-            pane.shellProfile ??
-            shells[0] ?? {
+            curPane.shellProfile ??
+            curShells[0] ?? {
               id: "powershell",
               name: "Windows PowerShell",
               executable: "powershell.exe",
@@ -240,17 +249,18 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
             term.write(bytes);
           });
           sessionIdRef.current = sid;
-          updatePane(tabId, pane.id, {
+          updatePane(tabId, curPane.id, {
             sessionId: sid,
             connecting: false,
             connected: true,
             error: null,
           });
+          term.focus();
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         term.writeln(`\r\n\x1b[1;31m[CONNECTION FAILED]\x1b[0m ${msg}\r\n`);
-        updatePane(tabId, pane.id, {
+        updatePane(tabId, curPane.id, {
           connecting: false,
           connected: false,
           error: msg,
@@ -258,7 +268,7 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [pane.id, pane.kind, pane.hostId, tabId, connectNonce]
+    [pane.id, tabId, connectNonce]
   );
 
   useEffect(() => {
@@ -411,7 +421,15 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
       return true;
     });
 
-    startBackendSession(term);
+    if (paneRef.current.standbyWarm) {
+      notifyStandbyMilestone("xterm", () => {
+        if (isTauriRuntime()) {
+          apiMarkStandbyReady().catch(() => {});
+        }
+      });
+    } else {
+      startBackendSession(term);
+    }
 
     let resizeTimer: ReturnType<typeof setTimeout> | null = null;
     const ro = new ResizeObserver(() => {
@@ -453,6 +471,19 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connectNonce]);
+
+  // Instant in-place activation when pre-warmed standby XTerm + WebGL pane receives a popped-out session!
+  useEffect(() => {
+    if (!pane.standbyWarm && wasStandbyWarmRef.current && xtermRef.current) {
+      wasStandbyWarmRef.current = false;
+      try {
+        fitRef.current?.fit();
+      } catch {
+        // ignore layout edge
+      }
+      void startBackendSession(xtermRef.current);
+    }
+  }, [pane.standbyWarm, startBackendSession]);
 
   const currentTab = tabs.find((t) => t.id === tabId);
   const siblingPaneCount =

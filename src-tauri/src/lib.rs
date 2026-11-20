@@ -454,8 +454,11 @@ fn sync_git_now(state: State<'_, AppState>) -> CmdResult<GitSyncStatus> {
 
 /* ─── Local ConPTY Commands ─── */
 #[tauri::command]
-fn pty_discover_shells() -> Vec<ShellProfile> {
-    PtyManager::discover_shells()
+async fn pty_discover_shells(state: State<'_, AppState>) -> CmdResult<Vec<ShellProfile>> {
+    let pty = state.pty.clone();
+    tokio::task::spawn_blocking(move || pty.discover_shells_cached())
+        .await
+        .map_err(err_str)
 }
 
 #[tauri::command]
@@ -823,7 +826,17 @@ struct PopoutInitPayload {
     vault_name: String,
 }
 
-fn bring_window_to_front(win: &tauri::WebviewWindow) {
+/// Fast in-app focus when SkynetSSH already owns foreground (NO `set_always_on_top` DWM flicker!).
+fn focus_window_fast(win: &tauri::WebviewWindow) {
+    if win.is_minimized().unwrap_or(false) {
+        let _ = win.unminimize();
+    }
+    let _ = win.show();
+    let _ = win.set_focus();
+}
+
+/// Summon from a global background shortcut when another OS app currently holds foreground lock.
+fn summon_window_from_hotkey(win: &tauri::WebviewWindow) {
     let was_pinned = win.is_always_on_top().unwrap_or(false);
     let _ = win.unminimize();
     let _ = win.show();
@@ -832,6 +845,14 @@ fn bring_window_to_front(win: &tauri::WebviewWindow) {
         let _ = win.set_always_on_top(false);
     }
     let _ = win.set_focus();
+}
+
+fn schedule_standby_replenish(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        // Wait until user finishes dragging / interacting so zero WebView2 boot CPU competes!
+        tokio::time::sleep(Duration::from_millis(2400)).await;
+        spawn_standby_popout(app);
+    });
 }
 
 fn cleanup_if_no_visible_windows(app: &AppHandle, standby_slot: &Arc<Mutex<Option<String>>>) {
@@ -898,8 +919,8 @@ fn spawn_standby_popout(app: AppHandle) {
         .inner_size(1040.0, 680.0)
         .min_inner_size(520.0, 340.0)
         .decorations(false)
-        .transparent(true)
-        .background_color(tauri::window::Color(9, 10, 14, 255))
+        .transparent(false)
+        .background_color(tauri::window::Color(11, 13, 18, 255))
         .visible(false)
         .center()
         .build() else {
@@ -907,16 +928,6 @@ fn spawn_standby_popout(app: AppHandle) {
         };
 
         attach_window_lifecycle_hook(&win, app.clone());
-
-        #[cfg(target_os = "windows")]
-        {
-            let w = win.clone();
-            let _ = win.run_on_main_thread(move || {
-                if window_vibrancy::apply_mica(&w, Some(true)).is_err() {
-                    let _ = window_vibrancy::apply_acrylic(&w, Some((10, 12, 18, 220)));
-                }
-            });
-        }
     });
 }
 
@@ -947,10 +958,13 @@ async fn window_popout_terminal(
     vault_name: Option<String>,
     x: Option<f64>,
     y: Option<f64>,
+    tear_off_drag: Option<bool>,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> CmdResult<String> {
-    // Fast path (<15ms): claim the pre-warmed standby WebviewWindow if ready!
+    let tear_off = tear_off_drag.unwrap_or(false);
+
+    // Fast path (<10ms): claim the pre-warmed standby WebviewWindow (XTerm + WebGL already mounted!)
     let claimed_standby = state
         .standby_popout
         .lock()
@@ -971,16 +985,35 @@ async fn window_popout_terminal(
         };
 
         let _ = win.set_title(&format!("SkynetSSH — {title}"));
-        if let (Some(px), Some(py)) = (x, y) {
-            let _ = win.set_position(tauri::LogicalPosition::new(px, py));
-        } else {
-            let _ = win.center();
-        }
         let _ = app.emit("skynet-activate-popout", &payload);
-        bring_window_to_front(&win);
 
-        // Immediately warm up the next standby window in the background
-        spawn_standby_popout(app.clone());
+        // Position, show, focus, and (for Chrome-style drag-down tear-off!) hand the active
+        // left-mouse-down drag directly to Win32 HTCAPTION on the main UI thread!
+        let w = win.clone();
+        let _ = win.run_on_main_thread(move || {
+            if tear_off {
+                if let Ok(cursor) = w.cursor_position() {
+                    let scale = w.scale_factor().unwrap_or(1.0);
+                    let ox = (160.0 * scale).round() as i32;
+                    let oy = (18.0 * scale).round() as i32;
+                    let _ = w.set_position(tauri::PhysicalPosition::new(
+                        (cursor.x as i32) - ox,
+                        (cursor.y as i32) - oy,
+                    ));
+                }
+            } else if let (Some(px), Some(py)) = (x, y) {
+                let _ = w.set_position(tauri::LogicalPosition::new(px, py));
+            } else {
+                let _ = w.center();
+            }
+            let _ = w.show();
+            let _ = w.set_focus();
+            if tear_off {
+                let _ = w.start_dragging();
+            }
+        });
+
+        schedule_standby_replenish(app);
         return Ok(standby_label);
     }
 
@@ -1009,8 +1042,8 @@ async fn window_popout_terminal(
     .inner_size(1040.0, 680.0)
     .min_inner_size(520.0, 340.0)
     .decorations(false)
-    .transparent(true)
-    .background_color(tauri::window::Color(9, 10, 14, 255));
+    .transparent(false)
+    .background_color(tauri::window::Color(11, 13, 18, 255));
 
     builder = if let (Some(px), Some(py)) = (x, y) {
         builder.position(px, py)
@@ -1021,17 +1054,24 @@ async fn window_popout_terminal(
     let win = builder.build().map_err(err_str)?;
     attach_window_lifecycle_hook(&win, app.clone());
 
-    #[cfg(target_os = "windows")]
-    {
+    if tear_off {
         let w = win.clone();
         let _ = win.run_on_main_thread(move || {
-            if window_vibrancy::apply_mica(&w, Some(true)).is_err() {
-                let _ = window_vibrancy::apply_acrylic(&w, Some((10, 12, 18, 220)));
+            if let Ok(cursor) = w.cursor_position() {
+                let scale = w.scale_factor().unwrap_or(1.0);
+                let ox = (160.0 * scale).round() as i32;
+                let oy = (18.0 * scale).round() as i32;
+                let _ = w.set_position(tauri::PhysicalPosition::new(
+                    (cursor.x as i32) - ox,
+                    (cursor.y as i32) - oy,
+                ));
             }
+            let _ = w.set_focus();
+            let _ = w.start_dragging();
         });
     }
 
-    spawn_standby_popout(app);
+    schedule_standby_replenish(app);
     Ok(label)
 }
 
@@ -1062,7 +1102,7 @@ async fn window_dock_back_to_main(
         vault_name: vault_name.unwrap_or_else(|| "Personal Vault".into()),
     };
     let _ = app.emit("skynet-dock-from-popout", &payload);
-    bring_window_to_front(&main_win);
+    focus_window_fast(&main_win);
     let _ = window.close();
     Ok(())
 }
@@ -1107,13 +1147,13 @@ pub fn run() {
                             // Bring pop-outs forward first, then focus main on top (or pop-out if main was closed)
                             for (lbl, w) in &active_windows {
                                 if lbl != "main" {
-                                    bring_window_to_front(w);
+                                    summon_window_from_hotkey(w);
                                 }
                             }
                             if let Some((_, main_w)) =
                                 active_windows.iter().find(|(lbl, _)| lbl == "main")
                             {
-                                bring_window_to_front(main_w);
+                                summon_window_from_hotkey(main_w);
                             }
                             let _ = app.emit("app-quake-focus", ());
                         }

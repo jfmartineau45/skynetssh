@@ -90,13 +90,7 @@ export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
   const vaultBtnRef = useRef<HTMLButtonElement>(null);
 
   const [alwaysOnTop, setAlwaysOnTop] = useState(false);
-  const [draggedTabGhost, setDraggedTabGhost] = useState<{
-    tabId: string;
-    title: string;
-    x: number;
-    y: number;
-    detachReady: boolean;
-  } | null>(null);
+  const [draggingTabId, setDraggingTabId] = useState<string | null>(null);
   const eyeClicksRef = useRef<{ count: number; lastAt: number }>({
     count: 0,
     lastAt: 0,
@@ -124,7 +118,6 @@ export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
   const handleTabMouseDown = (
     e: React.MouseEvent<HTMLDivElement>,
     tabId: string,
-    tabTitle: string,
     tabKind: string
   ) => {
     if (e.button !== 0) return;
@@ -136,66 +129,60 @@ export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
     const startX = e.clientX;
     const startY = e.clientY;
     let dragging = false;
-    let cancelled = false;
+    let tornOff = false;
 
-    const isOutsideTabStrip = (ev: MouseEvent) =>
+    const shouldTearOffNow = (ev: MouseEvent) =>
       !isPopout &&
       tabKind === "terminal" &&
       isTauriRuntime() &&
-      (ev.clientY > 56 ||
-        ev.clientY < -12 ||
-        ev.clientX < -16 ||
-        ev.clientX > window.innerWidth + 16);
+      (ev.clientY > 52 ||
+        ev.clientY < -14 ||
+        ev.clientX < -24 ||
+        ev.clientX > window.innerWidth + 24);
 
     const cleanup = () => {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
       window.removeEventListener("keydown", onKey);
-      setDraggedTabGhost(null);
+      setDraggingTabId(null);
     };
 
     const onKey = (ev: KeyboardEvent) => {
       if (ev.key === "Escape") {
-        cancelled = true;
+        tornOff = true;
         cleanup();
       }
     };
 
     const onMove = (ev: MouseEvent) => {
-      if (cancelled) return;
+      if (tornOff) return;
       if (!dragging) {
-        if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < 6) return;
+        if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < 5) return;
         dragging = true;
+        setDraggingTabId(tabId);
       }
 
-      const detachReady = isOutsideTabStrip(ev);
-      setDraggedTabGhost({
-        tabId,
-        title: tabTitle,
-        x: Math.max(8, Math.min(ev.clientX + 12, window.innerWidth - 260)),
-        y: Math.max(8, Math.min(ev.clientY + 14, window.innerHeight - 44)),
-        detachReady,
-      });
+      // Chrome-style instant live tear-off: the moment the tab leaves the 40px TitleBar
+      // while the mouse button is still held down, detach immediately & hand the active OS
+      // window drag directly to Win32 HTCAPTION so the real window glides with your cursor!
+      if (shouldTearOffNow(ev)) {
+        tornOff = true;
+        cleanup();
+        void popoutTabToWindow(tabId, { tearOffDrag: true });
+        return;
+      }
 
-      if (!detachReady) {
-        const hovered = document
-          .elementFromPoint(ev.clientX, 20)
-          ?.closest("[data-skynet-tab-id]") as HTMLElement | null;
-        const targetId = hovered?.dataset?.skynetTabId;
-        if (targetId && targetId !== tabId && targetId !== "vault") {
-          reorderTabs(tabId, targetId);
-        }
+      const hovered = document
+        .elementFromPoint(ev.clientX, 20)
+        ?.closest("[data-skynet-tab-id]") as HTMLElement | null;
+      const targetId = hovered?.dataset?.skynetTabId;
+      if (targetId && targetId !== tabId && targetId !== "vault") {
+        reorderTabs(tabId, targetId);
       }
     };
 
-    const onUp = (ev: MouseEvent) => {
-      const shouldPopout = !cancelled && dragging && isOutsideTabStrip(ev);
+    const onUp = () => {
       cleanup();
-      if (shouldPopout) {
-        const dropX = Math.round(ev.screenX - 140);
-        const dropY = Math.round(ev.screenY - 18);
-        void popoutTabToWindow(tabId, { x: dropX, y: dropY });
-      }
     };
 
     window.addEventListener("mousemove", onMove);
@@ -500,13 +487,13 @@ export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
         <div className="flex items-center h-full px-1.5 gap-1 overflow-x-auto no-scrollbar">
           {tabs.map((tab) => {
             const isActive = tab.id === activeTabId;
-            const isDraggingThis = draggedTabGhost?.tabId === tab.id;
+            const isDraggingThis = draggingTabId === tab.id;
             return (
               <div
                 key={tab.id}
                 data-skynet-tab-id={tab.id}
                 onMouseDown={(e) =>
-                  handleTabMouseDown(e, tab.id, tab.title, tab.kind)
+                  handleTabMouseDown(e, tab.id, tab.kind)
                 }
                 onClick={() => setActiveTab(tab.id)}
                 onContextMenu={(e) => {
@@ -524,13 +511,11 @@ export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
                 }}
                 title={
                   tab.kind === "terminal" && !isPopout
-                    ? `${tab.title} — Drag outside bar to Pop Out (or Ctrl+Shift+O)`
+                    ? `${tab.title} — Drag down to tear off into standalone window (Ctrl+Shift+O)`
                     : tab.title
                 }
                 className={`group relative flex items-center gap-1.5 h-7 px-2.5 rounded-md text-xs font-medium cursor-pointer transition-all shrink-0 ${
-                  isDraggingThis && draggedTabGhost?.detachReady
-                    ? "opacity-45 ring-1 ring-sky-400/60"
-                    : ""
+                  isDraggingThis ? "ring-1 ring-sky-400/60" : ""
                 } ${
                   isActive
                     ? "bg-[var(--bg-elevated)] text-[var(--text-primary)] border border-[var(--border-accent)] shadow-sm"
@@ -980,31 +965,6 @@ export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
           </div>
         );
       })()}
-
-      {/* Floating Drag-Tab-Out Cursor Preview Pill */}
-      {draggedTabGhost && (
-        <div
-          style={{ top: draggedTabGhost.y, left: draggedTabGhost.x }}
-          className={`fixed pointer-events-none z-[100] flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-semibold shadow-2xl transition-colors ${
-            draggedTabGhost.detachReady
-              ? "bg-sky-950/95 border-sky-400 text-sky-100 shadow-[0_0_20px_rgba(56,189,248,0.35)]"
-              : "bg-[var(--bg-elevated)]/95 border-[var(--border-accent)] text-[var(--text-primary)]"
-          }`}
-        >
-          <ExternalLink
-            className={`w-3.5 h-3.5 shrink-0 ${
-              draggedTabGhost.detachReady
-                ? "text-sky-300"
-                : "text-[var(--text-muted)]"
-            }`}
-          />
-          <span className="max-w-[200px] truncate">
-            {draggedTabGhost.detachReady
-              ? `Release to Pop Out "${draggedTabGhost.title}"`
-              : `Move "${draggedTabGhost.title}" (drag down to Pop Out)`}
-          </span>
-        </div>
-      )}
     </header>
   );
 };

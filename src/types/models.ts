@@ -228,6 +228,7 @@ export interface TerminalPaneConfig {
   vaultName?: string;
   shellProfile?: ShellProfile;
   sessionId?: string;
+  standbyWarm?: boolean;
   connected: boolean;
   connecting: boolean;
   error?: string | null;

@@ -10,6 +10,7 @@ import {
 import {
   consumePaneSessionHandedOff,
   markPaneSessionHandedOff,
+  notifyStandbyMilestone,
   reorderTabList,
 } from "./windowTabs.ts";
 
@@ -115,4 +116,14 @@ test("windowTabs reorders terminal tabs while keeping pinned Vault anchored and 
   markPaneSessionHandedOff("pane-live-1");
   assert.equal(consumePaneSessionHandedOff("pane-live-1"), true);
   assert.equal(consumePaneSessionHandedOff("pane-live-1"), false);
+
+  let readyCount = 0;
+  notifyStandbyMilestone("listener", () => {
+    readyCount += 1;
+  });
+  assert.equal(readyCount, 0);
+  notifyStandbyMilestone("xterm", () => {
+    readyCount += 1;
+  });
+  assert.equal(readyCount, 1);
 });
