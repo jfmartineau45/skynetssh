@@ -270,6 +270,7 @@ where
     emit(0, total, "running", None);
     let mut buf = vec![0u8; 65536];
     let mut copied = 0u64;
+    let mut last_emit = std::time::Instant::now();
     loop {
         let n = reader.read(&mut buf).await?;
         if n == 0 {
@@ -277,7 +278,10 @@ where
         }
         writer.write_all(&buf[..n]).await?;
         copied += n as u64;
-        emit(copied, total, "running", None);
+        if last_emit.elapsed() >= Duration::from_millis(60) {
+            emit(copied, total, "running", None);
+            last_emit = std::time::Instant::now();
+        }
     }
     writer.flush().await?;
     Ok((copied, total))

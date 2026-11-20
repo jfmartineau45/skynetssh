@@ -1,15 +1,12 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { TitleBar } from "./components/chrome/TitleBar";
 import { CommandPalette } from "./components/chrome/CommandPalette";
 import { HostKeyModal } from "./components/chrome/HostKeyModal";
 import { SnippetPromptModal } from "./components/chrome/SnippetPromptModal";
-import { SkynetEffectsOverlay } from "./components/chrome/SkynetEffectsOverlay";
 import { VaultUnlockModal } from "./components/vault/VaultUnlockModal";
-import { VaultDashboard } from "./components/vault/VaultDashboard";
 import { SessionTabView } from "./components/terminal/SessionTabView";
-import { SftpDualPaneTab } from "./components/sftp/SftpDualPaneTab";
 import {
   useWorkspaceStore,
   isPopoutWindowContext,
@@ -22,6 +19,22 @@ import {
   isTauriRuntime,
 } from "./lib/ipc";
 import type { HostKeyPromptEvent, ShellProfile } from "./types/models";
+
+const VaultDashboard = lazy(() =>
+  import("./components/vault/VaultDashboard").then((m) => ({
+    default: m.VaultDashboard,
+  }))
+);
+const SftpDualPaneTab = lazy(() =>
+  import("./components/sftp/SftpDualPaneTab").then((m) => ({
+    default: m.SftpDualPaneTab,
+  }))
+);
+const SkynetEffectsOverlay = lazy(() =>
+  import("./components/chrome/SkynetEffectsOverlay").then((m) => ({
+    default: m.SkynetEffectsOverlay,
+  }))
+);
 
 interface PopoutActivationPayload {
   targetWindow?: string | null;
@@ -41,6 +54,28 @@ const FALLBACK_PWSH: ShellProfile = {
   args: ["-NoLogo"],
   icon: "powershell",
 };
+
+function resolvePopoutWorkspaceParams(
+  p: PopoutActivationPayload,
+  availableShells: ShellProfile[]
+) {
+  const kind: "ssh" | "local" = p.kind === "local" ? "local" : "ssh";
+  const matched =
+    availableShells.find((s) => s.id === p.shellId) ??
+    availableShells[0] ??
+    FALLBACK_PWSH;
+  return {
+    kind,
+    hostId: p.hostId || undefined,
+    shellProfile: kind === "local" ? matched : undefined,
+    sessionId: p.sessionId || undefined,
+    title: p.title || "Terminal",
+    vaultKind: (p.vaultKind === "team" ? "team" : "personal") as
+      | "personal"
+      | "team",
+    vaultName: p.vaultName || "Personal Vault",
+  };
+}
 
 export const App: React.FC = () => {
   const {
@@ -70,37 +105,23 @@ export const App: React.FC = () => {
   }, []);
   const [standbyActivated, setStandbyActivated] = useState(!isStandbyBoot);
 
-  const initialPopoutParams = useMemo(() => {
+  const initialPopoutParams = useMemo<PopoutActivationPayload | null>(() => {
     if (typeof window === "undefined") return null;
     const injected = (
       window as unknown as {
         __SKYNET_POPOUT__?: PopoutActivationPayload;
       }
     ).__SKYNET_POPOUT__;
-    if (injected) {
-      return {
-        kind: (injected.kind === "local" ? "local" : "ssh") as "ssh" | "local",
-        hostId: injected.hostId || undefined,
-        shellId: injected.shellId || undefined,
-        sessionId: injected.sessionId || undefined,
-        title: injected.title || "Terminal",
-        vaultKind: (injected.vaultKind === "team" ? "team" : "personal") as
-          | "personal"
-          | "team",
-        vaultName: injected.vaultName || "Personal Vault",
-      };
-    }
+    if (injected) return injected;
     const p = new URLSearchParams(window.location.search);
     if (p.get("popout") !== "1") return null;
     return {
-      kind: (p.get("kind") === "local" ? "local" : "ssh") as "ssh" | "local",
-      hostId: p.get("hostId") || undefined,
-      shellId: p.get("shellId") || undefined,
-      sessionId: p.get("sessionId") || undefined,
+      kind: p.get("kind") || "ssh",
+      hostId: p.get("hostId"),
+      shellId: p.get("shellId"),
+      sessionId: p.get("sessionId"),
       title: p.get("title") || "Terminal",
-      vaultKind: (p.get("vaultKind") === "team" ? "team" : "personal") as
-        | "personal"
-        | "team",
+      vaultKind: p.get("vaultKind") || "personal",
       vaultName: p.get("vaultName") || "Personal Vault",
     };
   }, []);
@@ -119,23 +140,13 @@ export const App: React.FC = () => {
       return;
     }
 
-    // Mount popped-out session IMMEDIATELY without waiting on WSL/shell discovery (~400ms saved!)
     if (initialPopoutParams) {
-      const existingShells = useWorkspaceStore.getState().shells;
-      const matchedShell =
-        existingShells.find((s) => s.id === initialPopoutParams.shellId) ??
-        existingShells[0] ??
-        FALLBACK_PWSH;
-      initPopoutWorkspace({
-        kind: initialPopoutParams.kind,
-        hostId: initialPopoutParams.hostId,
-        shellProfile:
-          initialPopoutParams.kind === "local" ? matchedShell : undefined,
-        sessionId: initialPopoutParams.sessionId,
-        title: initialPopoutParams.title,
-        vaultKind: initialPopoutParams.vaultKind,
-        vaultName: initialPopoutParams.vaultName,
-      });
+      initPopoutWorkspace(
+        resolvePopoutWorkspaceParams(
+          initialPopoutParams,
+          useWorkspaceStore.getState().shells
+        )
+      );
     }
 
     if (!isStandbyBoot) {
@@ -159,22 +170,9 @@ export const App: React.FC = () => {
           window as unknown as { __SKYNET_POPOUT__?: PopoutActivationPayload }
         ).__SKYNET_POPOUT__ = p;
         setStandbyActivated(true);
-        const curShells = useWorkspaceStore.getState().shells;
-        const kind = p.kind === "local" ? "local" : "ssh";
-        const matched =
-          curShells.find((s) => s.id === p.shellId) ??
-          curShells[0] ??
-          FALLBACK_PWSH;
-        initPopoutWorkspace({
-          kind,
-          hostId: p.hostId || undefined,
-          shellProfile: kind === "local" ? matched : undefined,
-          sessionId: p.sessionId || undefined,
-          title: p.title || "Terminal",
-          vaultKind: p.vaultKind === "team" ? "team" : "personal",
-          vaultName: p.vaultName || "Personal Vault",
-        });
-        // Defer non-critical metadata hydration until after window is visible & interactive
+        initPopoutWorkspace(
+          resolvePopoutWorkspaceParams(p, useWorkspaceStore.getState().shells)
+        );
         setTimeout(() => {
           refreshStatus().catch(() => {});
           apiDiscoverShells()
@@ -199,22 +197,12 @@ export const App: React.FC = () => {
       "skynet-dock-from-popout",
       (ev) => {
         if (currentLabel !== "main") return;
-        const p = ev.payload;
-        const curShells = useWorkspaceStore.getState().shells;
-        const kind = p.kind === "local" ? "local" : "ssh";
-        const matched =
-          curShells.find((s) => s.id === p.shellId) ??
-          curShells[0] ??
-          FALLBACK_PWSH;
-        receiveDockedTabFromPopout({
-          kind,
-          hostId: p.hostId || undefined,
-          shellProfile: kind === "local" ? matched : undefined,
-          sessionId: p.sessionId || undefined,
-          title: p.title || "Terminal",
-          vaultKind: p.vaultKind === "team" ? "team" : "personal",
-          vaultName: p.vaultName || "Personal Vault",
-        });
+        receiveDockedTabFromPopout(
+          resolvePopoutWorkspaceParams(
+            ev.payload,
+            useWorkspaceStore.getState().shells
+          )
+        );
       }
     );
 
@@ -366,15 +354,27 @@ export const App: React.FC = () => {
               style={{ display: visible ? "flex" : "none" }}
               className="w-full h-full min-h-0 overflow-hidden"
             >
-              {tab.kind === "vault" && <VaultDashboard />}
+              {tab.kind === "vault" && (
+                <Suspense fallback={null}>
+                  <VaultDashboard />
+                </Suspense>
+              )}
               {tab.kind === "terminal" && <SessionTabView tab={tab} />}
-              {tab.kind === "sftp" && <SftpDualPaneTab tab={tab} />}
+              {tab.kind === "sftp" && (
+                <Suspense fallback={null}>
+                  <SftpDualPaneTab tab={tab} />
+                </Suspense>
+              )}
             </div>
           );
         })}
       </div>
 
-      {standbyActivated && <SkynetEffectsOverlay />}
+      {standbyActivated && (
+        <Suspense fallback={null}>
+          <SkynetEffectsOverlay />
+        </Suspense>
+      )}
       {standbyActivated && <VaultUnlockModal />}
       {standbyActivated && <HostKeyModal />}
       {standbyActivated && <SnippetPromptModal />}

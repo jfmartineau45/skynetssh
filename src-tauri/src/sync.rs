@@ -407,10 +407,16 @@ pub fn import_termius_json(vault: &VaultEngine, file_path: &Path) -> Result<usiz
 }
 
 fn run_git(vault_dir: &Path, args: &[&str]) -> Result<String> {
-    let out = Command::new("git")
-        .current_dir(vault_dir)
-        .args(args)
-        .output()?;
+    let mut cmd = Command::new("git");
+    cmd.current_dir(vault_dir)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .args(args);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000);
+    }
+    let out = cmd.output()?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         return Err(anyhow!("git {} failed: {}", args.join(" "), stderr.trim()));
@@ -448,14 +454,18 @@ pub fn git_status(vault_dir: &Path) -> GitSyncStatus {
 }
 
 pub fn git_init_remote(vault_dir: &Path, remote_url: &str) -> Result<GitSyncStatus> {
+    let trimmed = remote_url.trim();
+    if trimmed.starts_with('-') {
+        return Err(anyhow!("Invalid Git remote URL: cannot start with '-'"));
+    }
     if !vault_dir.join(".git").exists() {
         run_git(vault_dir, &["init", "-b", "main"])?;
     }
-    if !remote_url.is_empty() {
+    if !trimmed.is_empty() {
         if run_git(vault_dir, &["remote", "get-url", "origin"]).is_ok() {
-            run_git(vault_dir, &["remote", "set-url", "origin", remote_url])?;
+            run_git(vault_dir, &["remote", "set-url", "--", "origin", trimmed])?;
         } else {
-            run_git(vault_dir, &["remote", "add", "origin", remote_url])?;
+            run_git(vault_dir, &["remote", "add", "--", "origin", trimmed])?;
         }
     }
     Ok(git_status(vault_dir))
@@ -655,5 +665,14 @@ mod tests {
         );
         assert_eq!(hosts[1].hostname, "homelab");
         assert_eq!(hosts[1].port, 22);
+    }
+
+    #[test]
+    fn test_rejects_flag_injected_git_remote_url() {
+        let dir = std::env::temp_dir().join(format!("skynet_git_chk_{}", uuid::Uuid::new_v4()));
+        let _ = fs::create_dir_all(&dir);
+        let err = git_init_remote(&dir, "--upload-pack=evil").unwrap_err();
+        assert!(err.to_string().contains("cannot start with '-'"));
+        let _ = fs::remove_dir_all(dir);
     }
 }

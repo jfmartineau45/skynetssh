@@ -106,45 +106,59 @@ fn vault_status(state: State<'_, AppState>) -> CmdResult<VaultStatus> {
 }
 
 #[tauri::command]
-fn vault_init(
+async fn vault_init(
     master_password: String,
     remember_days: u32,
     state: State<'_, AppState>,
 ) -> CmdResult<VaultSnapshot> {
-    let mut guard = state.vault.lock().map_err(err_str)?;
-    guard
-        .initialize(&master_password, remember_days)
-        .map_err(err_str)
+    let vault = state.vault.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut guard = vault.lock().map_err(err_str)?;
+        guard.initialize(&master_password, remember_days).map_err(err_str)
+    })
+    .await
+    .map_err(err_str)?
 }
 
 #[tauri::command]
-fn vault_unlock(
+async fn vault_unlock(
     master_password: String,
     remember_days: u32,
     state: State<'_, AppState>,
 ) -> CmdResult<VaultSnapshot> {
-    let mut guard = state.vault.lock().map_err(err_str)?;
-    guard
-        .unlock(&master_password, remember_days)
-        .map_err(err_str)
+    let vault = state.vault.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut guard = vault.lock().map_err(err_str)?;
+        guard.unlock(&master_password, remember_days).map_err(err_str)
+    })
+    .await
+    .map_err(err_str)?
 }
 
 #[tauri::command]
-fn vault_unlock_keyring(state: State<'_, AppState>) -> CmdResult<VaultSnapshot> {
-    let mut guard = state.vault.lock().map_err(err_str)?;
-    guard.unlock_with_keyring().map_err(err_str)
+async fn vault_unlock_keyring(state: State<'_, AppState>) -> CmdResult<VaultSnapshot> {
+    let vault = state.vault.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut guard = vault.lock().map_err(err_str)?;
+        guard.unlock_with_keyring().map_err(err_str)
+    })
+    .await
+    .map_err(err_str)?
 }
 
 #[tauri::command]
-fn vault_unlock_totp(
+async fn vault_unlock_totp(
     code: String,
     remember_days: u32,
     state: State<'_, AppState>,
 ) -> CmdResult<VaultSnapshot> {
-    let mut guard = state.vault.lock().map_err(err_str)?;
-    guard
-        .unlock_with_totp(&code, remember_days)
-        .map_err(err_str)
+    let vault = state.vault.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut guard = vault.lock().map_err(err_str)?;
+        guard.unlock_with_totp(&code, remember_days).map_err(err_str)
+    })
+    .await
+    .map_err(err_str)?
 }
 
 #[tauri::command]
@@ -423,33 +437,30 @@ fn snippets_import_json(file_path: String, state: State<'_, AppState>) -> CmdRes
 }
 
 #[tauri::command]
-fn sync_git_status(state: State<'_, AppState>) -> CmdResult<GitSyncStatus> {
-    let dir = {
-        let guard = state.vault.lock().map_err(err_str)?;
-        guard.vault_dir()
-    };
-    Ok(sync::git_status(&dir))
+async fn sync_git_status(state: State<'_, AppState>) -> CmdResult<GitSyncStatus> {
+    let dir = state.vault.lock().map_err(err_str)?.vault_dir();
+    tokio::task::spawn_blocking(move || sync::git_status(&dir))
+        .await
+        .map_err(err_str)
 }
 
 #[tauri::command]
-fn sync_git_init_remote(
+async fn sync_git_init_remote(
     remote_url: String,
     state: State<'_, AppState>,
 ) -> CmdResult<GitSyncStatus> {
-    let dir = {
-        let guard = state.vault.lock().map_err(err_str)?;
-        guard.vault_dir()
-    };
-    sync::git_init_remote(&dir, &remote_url).map_err(err_str)
+    let dir = state.vault.lock().map_err(err_str)?.vault_dir();
+    tokio::task::spawn_blocking(move || sync::git_init_remote(&dir, &remote_url).map_err(err_str))
+        .await
+        .map_err(err_str)?
 }
 
 #[tauri::command]
-fn sync_git_now(state: State<'_, AppState>) -> CmdResult<GitSyncStatus> {
-    let dir = {
-        let guard = state.vault.lock().map_err(err_str)?;
-        guard.vault_dir()
-    };
-    sync::git_sync_now(&dir).map_err(err_str)
+async fn sync_git_now(state: State<'_, AppState>) -> CmdResult<GitSyncStatus> {
+    let dir = state.vault.lock().map_err(err_str)?.vault_dir();
+    tokio::task::spawn_blocking(move || sync::git_sync_now(&dir).map_err(err_str))
+        .await
+        .map_err(err_str)?
 }
 
 /* ─── Local ConPTY Commands ─── */
@@ -826,6 +837,42 @@ struct PopoutInitPayload {
     vault_name: String,
 }
 
+impl PopoutInitPayload {
+    fn build(
+        target_window: impl Into<String>,
+        kind: String,
+        host_id: Option<String>,
+        shell_id: Option<String>,
+        session_id: Option<String>,
+        title: String,
+        vault_kind: Option<String>,
+        vault_name: Option<String>,
+    ) -> Self {
+        Self {
+            target_window: Some(target_window.into()),
+            kind,
+            host_id: host_id.filter(|s| !s.is_empty()),
+            shell_id: shell_id.filter(|s| !s.is_empty()),
+            session_id: session_id.filter(|s| !s.is_empty()),
+            title,
+            vault_kind: vault_kind.unwrap_or_else(|| "personal".into()),
+            vault_name: vault_name.unwrap_or_else(|| "Personal Vault".into()),
+        }
+    }
+}
+
+fn position_window_under_cursor(win: &tauri::WebviewWindow) {
+    if let Ok(cursor) = win.cursor_position() {
+        let scale = win.scale_factor().unwrap_or(1.0);
+        let ox = (160.0 * scale).round() as i32;
+        let oy = (18.0 * scale).round() as i32;
+        let _ = win.set_position(tauri::PhysicalPosition::new(
+            (cursor.x as i32) - ox,
+            (cursor.y as i32) - oy,
+        ));
+    }
+}
+
 /// Fast in-app focus when SkynetSSH already owns foreground (NO `set_always_on_top` DWM flicker!).
 fn focus_window_fast(win: &tauri::WebviewWindow) {
     if win.is_minimized().unwrap_or(false) {
@@ -973,16 +1020,16 @@ async fn window_popout_terminal(
         .and_then(|lbl| app.get_webview_window(&lbl).map(|w| (lbl, w)));
 
     if let Some((standby_label, win)) = claimed_standby {
-        let payload = PopoutInitPayload {
-            target_window: Some(standby_label.clone()),
+        let payload = PopoutInitPayload::build(
+            &standby_label,
             kind,
-            host_id: host_id.filter(|s| !s.is_empty()),
-            shell_id: shell_id.filter(|s| !s.is_empty()),
-            session_id: session_id.filter(|s| !s.is_empty()),
-            title: title.clone(),
-            vault_kind: vault_kind.unwrap_or_else(|| "personal".into()),
-            vault_name: vault_name.unwrap_or_else(|| "Personal Vault".into()),
-        };
+            host_id,
+            shell_id,
+            session_id,
+            title.clone(),
+            vault_kind,
+            vault_name,
+        );
 
         let _ = win.set_title(&format!("SkynetSSH — {title}"));
         let _ = app.emit("skynet-activate-popout", &payload);
@@ -992,15 +1039,7 @@ async fn window_popout_terminal(
         let w = win.clone();
         let _ = win.run_on_main_thread(move || {
             if tear_off {
-                if let Ok(cursor) = w.cursor_position() {
-                    let scale = w.scale_factor().unwrap_or(1.0);
-                    let ox = (160.0 * scale).round() as i32;
-                    let oy = (18.0 * scale).round() as i32;
-                    let _ = w.set_position(tauri::PhysicalPosition::new(
-                        (cursor.x as i32) - ox,
-                        (cursor.y as i32) - oy,
-                    ));
-                }
+                position_window_under_cursor(&w);
             } else if let (Some(px), Some(py)) = (x, y) {
                 let _ = w.set_position(tauri::LogicalPosition::new(px, py));
             } else {
@@ -1019,16 +1058,16 @@ async fn window_popout_terminal(
 
     // Cold fallback if popped out before standby finished booting
     let label = format!("popout-{}", uuid::Uuid::new_v4().simple());
-    let payload = PopoutInitPayload {
-        target_window: Some(label.clone()),
+    let payload = PopoutInitPayload::build(
+        &label,
         kind,
-        host_id: host_id.filter(|s| !s.is_empty()),
-        shell_id: shell_id.filter(|s| !s.is_empty()),
-        session_id: session_id.filter(|s| !s.is_empty()),
-        title: title.clone(),
-        vault_kind: vault_kind.unwrap_or_else(|| "personal".into()),
-        vault_name: vault_name.unwrap_or_else(|| "Personal Vault".into()),
-    };
+        host_id,
+        shell_id,
+        session_id,
+        title.clone(),
+        vault_kind,
+        vault_name,
+    );
     let init_json = serde_json::to_string(&payload).map_err(err_str)?;
     let init_script = format!("window.__SKYNET_POPOUT__ = {init_json};");
 
@@ -1057,15 +1096,7 @@ async fn window_popout_terminal(
     if tear_off {
         let w = win.clone();
         let _ = win.run_on_main_thread(move || {
-            if let Ok(cursor) = w.cursor_position() {
-                let scale = w.scale_factor().unwrap_or(1.0);
-                let ox = (160.0 * scale).round() as i32;
-                let oy = (18.0 * scale).round() as i32;
-                let _ = w.set_position(tauri::PhysicalPosition::new(
-                    (cursor.x as i32) - ox,
-                    (cursor.y as i32) - oy,
-                ));
-            }
+            position_window_under_cursor(&w);
             let _ = w.set_focus();
             let _ = w.start_dragging();
         });
@@ -1091,16 +1122,16 @@ async fn window_dock_back_to_main(
     let Some(main_win) = app.get_webview_window("main") else {
         return Err("Main SkynetSSH window is closed".into());
     };
-    let payload = PopoutInitPayload {
-        target_window: Some("main".into()),
+    let payload = PopoutInitPayload::build(
+        "main",
         kind,
-        host_id: host_id.filter(|s| !s.is_empty()),
-        shell_id: shell_id.filter(|s| !s.is_empty()),
-        session_id: session_id.filter(|s| !s.is_empty()),
+        host_id,
+        shell_id,
+        session_id,
         title,
-        vault_kind: vault_kind.unwrap_or_else(|| "personal".into()),
-        vault_name: vault_name.unwrap_or_else(|| "Personal Vault".into()),
-    };
+        vault_kind,
+        vault_name,
+    );
     let _ = app.emit("skynet-dock-from-popout", &payload);
     focus_window_fast(&main_win);
     let _ = window.close();
