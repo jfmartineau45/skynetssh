@@ -297,7 +297,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     if (id === "vault") return;
     const isPopout =
       typeof window !== "undefined" &&
-      new URLSearchParams(window.location.search).get("popout") === "1";
+      (Boolean(
+        (window as unknown as { __SKYNET_POPOUT__?: unknown }).__SKYNET_POPOUT__
+      ) ||
+        new URLSearchParams(window.location.search).get("popout") === "1");
     const remainingCount = get().tabs.filter((t) => t.id !== id).length;
     if (isPopout && remainingCount === 0) {
       if (isTauriRuntime()) {

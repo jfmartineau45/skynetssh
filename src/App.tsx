@@ -30,6 +30,30 @@ export const App: React.FC = () => {
 
   const popoutParams = useMemo(() => {
     if (typeof window === "undefined") return null;
+    const injected = (
+      window as unknown as {
+        __SKYNET_POPOUT__?: {
+          kind?: string;
+          hostId?: string | null;
+          shellId?: string | null;
+          title?: string;
+          vaultKind?: string;
+          vaultName?: string;
+        };
+      }
+    ).__SKYNET_POPOUT__;
+    if (injected) {
+      return {
+        kind: (injected.kind === "local" ? "local" : "ssh") as "ssh" | "local",
+        hostId: injected.hostId || undefined,
+        shellId: injected.shellId || undefined,
+        title: injected.title || "Terminal",
+        vaultKind: (injected.vaultKind === "team" ? "team" : "personal") as
+          | "personal"
+          | "team",
+        vaultName: injected.vaultName || "Personal Vault",
+      };
+    }
     const p = new URLSearchParams(window.location.search);
     if (p.get("popout") !== "1") return null;
     return {
