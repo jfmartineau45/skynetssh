@@ -8,9 +8,11 @@ import {
   sortSftpEntries,
 } from "./sftpUtils.ts";
 import {
+  collectPanesFromNode,
   consumePaneSessionHandedOff,
   markPaneSessionHandedOff,
   notifyStandbyMilestone,
+  rehydrateTransferredTabs,
   reorderTabList,
 } from "./windowTabs.ts";
 
@@ -126,4 +128,85 @@ test("windowTabs reorders terminal tabs while keeping pinned Vault anchored and 
     readyCount += 1;
   });
   assert.equal(readyCount, 1);
+
+  // Verify multi-tab + split-pane dock-back preserves ALL tabs, ALL live sessionIds, and split layout!
+  const popoutTabs = [
+    {
+      id: "pop-tab-1",
+      kind: "terminal" as const,
+      title: "Console 1",
+      rootNode: {
+        type: "leaf" as const,
+        id: "l1",
+        pane: {
+          id: "p1",
+          kind: "ssh" as const,
+          title: "Console 1",
+          hostId: "h1",
+          sessionId: "live-ssh-1",
+          connected: true,
+          connecting: false,
+        },
+      },
+      activePaneId: "p1",
+      sftpDrawerOpen: false,
+    },
+    {
+      id: "pop-tab-2",
+      kind: "terminal" as const,
+      title: "Console 2 Split",
+      rootNode: {
+        type: "split" as const,
+        id: "sp1",
+        direction: "horizontal" as const,
+        ratio: 0.4,
+        first: {
+          type: "leaf" as const,
+          id: "l2a",
+          pane: {
+            id: "p2a",
+            kind: "local" as const,
+            title: "PWSH",
+            sessionId: "live-pty-2a",
+            connected: true,
+            connecting: false,
+          },
+        },
+        second: {
+          type: "leaf" as const,
+          id: "l2b",
+          pane: {
+            id: "p2b",
+            kind: "ssh" as const,
+            title: "DB",
+            hostId: "h2",
+            sessionId: "live-ssh-2b",
+            connected: true,
+            connecting: false,
+          },
+        },
+      },
+      activePaneId: "p2b",
+      sftpDrawerOpen: true,
+      sftpDrawerHostId: "h2",
+    },
+  ];
+
+  const docked = rehydrateTransferredTabs(popoutTabs);
+  assert.equal(docked.length, 2);
+  assert.equal(docked[0].title, "Console 1");
+  assert.equal(docked[1].title, "Console 2 Split");
+  assert.equal(
+    docked[0].kind === "terminal" ? collectPanesFromNode(docked[0].rootNode)[0].sessionId : "",
+    "live-ssh-1"
+  );
+  if (docked[1].kind === "terminal") {
+    const p2s = collectPanesFromNode(docked[1].rootNode);
+    assert.deepEqual(
+      p2s.map((p) => p.sessionId),
+      ["live-pty-2a", "live-ssh-2b"]
+    );
+    assert.equal(docked[1].activePaneId, p2s[1].id);
+    assert.equal(docked[1].rootNode.type === "split" ? docked[1].rootNode.ratio : 0, 0.4);
+  }
 });

@@ -132,7 +132,7 @@ export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
     let tornOff = false;
 
     const shouldTearOffNow = (ev: MouseEvent) =>
-      !isPopout &&
+      (!isPopout || tabs.length > 1) &&
       tabKind === "terminal" &&
       isTauriRuntime() &&
       (ev.clientY > 52 ||
@@ -546,7 +546,9 @@ export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
 
                 <span className="max-w-[140px] truncate">{tab.title}</span>
 
-                {tab.kind === "terminal" && isTauriRuntime() && !isPopout && (
+                {tab.kind === "terminal" &&
+                  isTauriRuntime() &&
+                  (!isPopout || tabs.length > 1) && (
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
@@ -766,10 +768,14 @@ export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
           <button
             onClick={() => void dockPopoutToMain()}
             className="flex items-center gap-1 h-6 px-2 rounded text-[11px] font-medium bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/35 transition"
-            title="Dock live terminal back into Main window tab bar (Ctrl+Shift+O)"
+            title={
+              tabs.length > 1
+                ? `Dock all ${tabs.length} open tabs back into Main window`
+                : "Dock live terminal back into Main window tab bar (Ctrl+Shift+O)"
+            }
           >
             <ArrowDownLeft className="w-3 h-3" />
-            <span>Dock</span>
+            <span>{tabs.length > 1 ? `Dock All (${tabs.length})` : "Dock"}</span>
           </button>
         )}
 
@@ -939,16 +945,34 @@ export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
             )}
 
             {isTauriRuntime() && isPopout && (
-              <button
-                onClick={() => {
-                  setTabCtxMenu(null);
-                  void dockPopoutToMain(ctxTab.id);
-                }}
-                className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-[var(--bg-hover)] text-emerald-300 font-medium"
-              >
-                <ArrowDownLeft className="w-3.5 h-3.5 shrink-0" />
-                <span>Dock Back to Main (Ctrl+Shift+O)</span>
-              </button>
+              <>
+                <button
+                  onClick={() => {
+                    setTabCtxMenu(null);
+                    void dockPopoutToMain(ctxTab.id);
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-[var(--bg-hover)] text-emerald-300 font-medium"
+                >
+                  <ArrowDownLeft className="w-3.5 h-3.5 shrink-0" />
+                  <span>
+                    {tabs.length > 1
+                      ? "Dock This Tab to Main (Ctrl+Shift+O)"
+                      : "Dock Back to Main (Ctrl+Shift+O)"}
+                  </span>
+                </button>
+                {tabs.length > 1 && (
+                  <button
+                    onClick={() => {
+                      setTabCtxMenu(null);
+                      void dockPopoutToMain();
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-[var(--bg-hover)] text-emerald-200 font-medium"
+                  >
+                    <ArrowDownLeft className="w-3.5 h-3.5 shrink-0" />
+                    <span>Dock All ({tabs.length}) Tabs to Main</span>
+                  </button>
+                )}
+              </>
             )}
 
             <div className="my-1 border-t border-[var(--border-subtle)]" />

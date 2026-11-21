@@ -835,9 +835,11 @@ struct PopoutInitPayload {
     title: String,
     vault_kind: String,
     vault_name: String,
+    tabs_json: Option<String>,
 }
 
 impl PopoutInitPayload {
+    #[allow(clippy::too_many_arguments)]
     fn build(
         target_window: impl Into<String>,
         kind: String,
@@ -847,6 +849,7 @@ impl PopoutInitPayload {
         title: String,
         vault_kind: Option<String>,
         vault_name: Option<String>,
+        tabs_json: Option<String>,
     ) -> Self {
         Self {
             target_window: Some(target_window.into()),
@@ -857,6 +860,7 @@ impl PopoutInitPayload {
             title,
             vault_kind: vault_kind.unwrap_or_else(|| "personal".into()),
             vault_name: vault_name.unwrap_or_else(|| "Personal Vault".into()),
+            tabs_json: tabs_json.filter(|s| !s.is_empty()),
         }
     }
 }
@@ -1003,6 +1007,7 @@ async fn window_popout_terminal(
     title: String,
     vault_kind: Option<String>,
     vault_name: Option<String>,
+    tabs_json: Option<String>,
     x: Option<f64>,
     y: Option<f64>,
     tear_off_drag: Option<bool>,
@@ -1029,6 +1034,7 @@ async fn window_popout_terminal(
             title.clone(),
             vault_kind,
             vault_name,
+            tabs_json,
         );
 
         let _ = win.set_title(&format!("SkynetSSH — {title}"));
@@ -1067,6 +1073,7 @@ async fn window_popout_terminal(
         title.clone(),
         vault_kind,
         vault_name,
+        tabs_json,
     );
     let init_json = serde_json::to_string(&payload).map_err(err_str)?;
     let init_script = format!("window.__SKYNET_POPOUT__ = {init_json};");
@@ -1106,35 +1113,28 @@ async fn window_popout_terminal(
     Ok(label)
 }
 
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DockBackPayload {
+    tabs_json: String,
+}
+
 #[tauri::command]
-#[allow(clippy::too_many_arguments)]
 async fn window_dock_back_to_main(
-    kind: String,
-    host_id: Option<String>,
-    shell_id: Option<String>,
-    session_id: Option<String>,
-    title: String,
-    vault_kind: Option<String>,
-    vault_name: Option<String>,
+    tabs_json: String,
+    close_window: bool,
     window: tauri::WebviewWindow,
     app: AppHandle,
 ) -> CmdResult<()> {
     let Some(main_win) = app.get_webview_window("main") else {
         return Err("Main SkynetSSH window is closed".into());
     };
-    let payload = PopoutInitPayload::build(
-        "main",
-        kind,
-        host_id,
-        shell_id,
-        session_id,
-        title,
-        vault_kind,
-        vault_name,
-    );
-    let _ = app.emit("skynet-dock-from-popout", &payload);
+    app.emit("skynet-dock-from-popout", DockBackPayload { tabs_json })
+        .map_err(err_str)?;
     focus_window_fast(&main_win);
-    let _ = window.close();
+    if close_window {
+        let _ = window.close();
+    }
     Ok(())
 }
 

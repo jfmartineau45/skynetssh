@@ -45,6 +45,11 @@ interface PopoutActivationPayload {
   title?: string;
   vaultKind?: string;
   vaultName?: string;
+  tabsJson?: string | null;
+}
+
+interface DockBackEventPayload {
+  tabsJson: string;
 }
 
 const FALLBACK_PWSH: ShellProfile = {
@@ -74,6 +79,7 @@ function resolvePopoutWorkspaceParams(
       | "personal"
       | "team",
     vaultName: p.vaultName || "Personal Vault",
+    tabsJson: p.tabsJson || undefined,
   };
 }
 
@@ -88,7 +94,7 @@ export const App: React.FC = () => {
     closeTab,
     openLocalTerminal,
     initPopoutWorkspace,
-    receiveDockedTabFromPopout,
+    receiveDockedTabsFromPopout,
     popoutTabToWindow,
     dockPopoutToMain,
     adjustFontSize,
@@ -192,17 +198,12 @@ export const App: React.FC = () => {
         .catch(() => {});
     }
 
-    // Receive popped-out terminal docked back into the Main window
-    const unlistenDockBack = listen<PopoutActivationPayload>(
+    // Receive popped-out terminal tab(s) & split trees docked back into the Main window
+    const unlistenDockBack = listen<DockBackEventPayload>(
       "skynet-dock-from-popout",
       (ev) => {
         if (currentLabel !== "main") return;
-        receiveDockedTabFromPopout(
-          resolvePopoutWorkspaceParams(
-            ev.payload,
-            useWorkspaceStore.getState().shells
-          )
-        );
+        receiveDockedTabsFromPopout(ev.payload.tabsJson);
       }
     );
 
@@ -234,7 +235,7 @@ export const App: React.FC = () => {
     setShells,
     enqueueHostKeyPrompt,
     initPopoutWorkspace,
-    receiveDockedTabFromPopout,
+    receiveDockedTabsFromPopout,
     initialPopoutParams,
     isStandbyBoot,
   ]);

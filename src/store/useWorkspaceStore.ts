@@ -23,6 +23,7 @@ import { useVaultStore } from "./useVaultStore";
 import {
   consumePaneSessionHandedOff,
   markPaneSessionHandedOff,
+  rehydrateTransferredTabs,
   reorderTabList,
 } from "../lib/windowTabs";
 
@@ -217,16 +218,9 @@ interface WorkspaceState {
     title: string;
     vaultKind?: "personal" | "team";
     vaultName?: string;
+    tabsJson?: string;
   }) => void;
-  receiveDockedTabFromPopout: (params: {
-    kind: "ssh" | "local";
-    hostId?: string;
-    shellProfile?: ShellProfile;
-    sessionId?: string;
-    title: string;
-    vaultKind?: "personal" | "team";
-    vaultName?: string;
-  }) => void;
+  receiveDockedTabsFromPopout: (tabsJson: string) => void;
   dockPopoutToMain: (tabId?: string) => Promise<void>;
   dockTabIntoSplit: (
     sourceTabId: string,
@@ -485,12 +479,34 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     title,
     vaultKind,
     vaultName,
+    tabsJson,
   }) => {
-    // Reuse pre-mounted warm XTerm + WebGL tab/pane IDs in-place so React performs ZERO remount!
     const existingWarm = get().tabs[0]?.id === WARM_POPOUT_TAB_ID;
-    const paneId = existingWarm ? WARM_POPOUT_PANE_ID : uid();
-    const tabId = existingWarm ? WARM_POPOUT_TAB_ID : uid();
-    const leafId = existingWarm ? "popout-warm-leaf" : uid();
+    const warmIds = existingWarm
+      ? {
+          tabId: WARM_POPOUT_TAB_ID,
+          leafId: "popout-warm-leaf",
+          paneId: WARM_POPOUT_PANE_ID,
+        }
+      : undefined;
+
+    if (tabsJson) {
+      try {
+        const parsed = JSON.parse(tabsJson) as WorkspaceTab[];
+        const rehydrated = rehydrateTransferredTabs(parsed, warmIds);
+        if (rehydrated.length > 0) {
+          set({ tabs: rehydrated, activeTabId: rehydrated[0].id });
+          return;
+        }
+      } catch {
+        // Fall through cleanly to single-pane hydration
+      }
+    }
+
+    // Reuse pre-mounted warm XTerm + WebGL tab/pane IDs in-place so React performs ZERO remount!
+    const paneId = warmIds ? warmIds.paneId : uid();
+    const tabId = warmIds ? warmIds.tabId : uid();
+    const leafId = warmIds ? warmIds.leafId : uid();
     const pane: TerminalPaneConfig = {
       id: paneId,
       kind,
@@ -519,65 +535,54 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set({ tabs: [popTab], activeTabId: tabId });
   },
 
-  receiveDockedTabFromPopout: ({
-    kind,
-    hostId,
-    shellProfile,
-    sessionId,
-    title,
-    vaultKind,
-    vaultName,
-  }) => {
-    const paneId = uid();
-    const tabId = uid();
-    const pane: TerminalPaneConfig = {
-      id: paneId,
-      kind,
-      title,
-      hostId,
-      shellProfile,
-      sessionId,
-      vaultKind: vaultKind ?? "personal",
-      vaultName: vaultName ?? "Personal Vault",
-      connected: Boolean(sessionId),
-      connecting: !sessionId,
-    };
-    const dockedTab: WorkspaceTab = {
-      id: tabId,
-      kind: "terminal",
-      title,
-      subtitle: hostId ? title : undefined,
-      vaultKind: vaultKind ?? "personal",
-      vaultName: vaultName ?? "Personal Vault",
-      rootNode: { type: "leaf", id: uid(), pane },
-      activePaneId: paneId,
-      sftpDrawerOpen: false,
-      sftpDrawerHostId: hostId,
-    };
-    set((s) => ({ tabs: [...s.tabs, dockedTab], activeTabId: tabId }));
+  receiveDockedTabsFromPopout: (tabsJson) => {
+    try {
+      const parsed = JSON.parse(tabsJson) as WorkspaceTab[];
+      const dockedTabs = rehydrateTransferredTabs(parsed);
+      if (dockedTabs.length === 0) return;
+      const lastDockedId = dockedTabs[dockedTabs.length - 1].id;
+      set((s) => ({
+        tabs: [...s.tabs, ...dockedTabs],
+        activeTabId: lastDockedId,
+      }));
+    } catch {
+      // ignore malformed payload
+    }
   },
 
   dockPopoutToMain: async (tabId) => {
     if (!isTauriRuntime()) return;
     const state = get();
-    const targetId = tabId ?? state.activeTabId;
-    const tab = state.tabs.find((t) => t.id === targetId);
-    if (!tab || tab.kind !== "terminal") return;
-    const panes = collectPanes(tab.rootNode);
-    for (const pane of panes) {
-      if (pane.sessionId) {
-        markPaneSessionHandedOff(pane.id);
+    // Window-level `↙ Dock` button (no tabId): dock ALL tabs & split panes back into Main at once!
+    // Per-tab `Dock Tab` (with tabId): dock only that tab and keep any other console tabs alive in Pop-Out!
+    const tabsToDock = tabId
+      ? state.tabs.filter((t) => t.id === tabId && t.kind !== "vault")
+      : state.tabs.filter((t) => t.kind !== "vault");
+    if (tabsToDock.length === 0) return;
+
+    for (const t of tabsToDock) {
+      if (t.kind === "terminal") {
+        for (const pane of collectPanes(t.rootNode)) {
+          if (pane.sessionId) {
+            markPaneSessionHandedOff(pane.id);
+          }
+        }
       }
-      await apiDockPopoutBackToMain({
-        kind: pane.kind,
-        hostId: pane.hostId ?? null,
-        shellId: pane.shellProfile?.id ?? null,
-        sessionId: pane.sessionId ?? null,
-        title: pane.title,
-        vaultKind: pane.vaultKind ?? null,
-        vaultName: pane.vaultName ?? null,
-      });
     }
+
+    const remainingInPopout = state.tabs.filter(
+      (t) => t.kind !== "vault" && !tabsToDock.some((dt) => dt.id === t.id)
+    );
+    const closeWindow = remainingInPopout.length === 0;
+
+    if (!closeWindow && tabId) {
+      get().closeTab(tabId);
+    }
+
+    await apiDockPopoutBackToMain({
+      tabsJson: JSON.stringify(tabsToDock),
+      closeWindow,
+    });
   },
 
   dockTabIntoSplit: (sourceTabId, targetTabId, targetPaneId, direction) => {
@@ -692,28 +697,29 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const tab = state.tabs.find((t) => t.id === tabId);
     if (!tab || tab.kind !== "terminal" || !isTauriRuntime()) return;
     const panes = collectPanes(tab.rootNode);
+    const primaryPane = panes[0];
+    if (!primaryPane) return;
     for (const pane of panes) {
       if (pane.sessionId) {
         markPaneSessionHandedOff(pane.id);
       }
     }
-    // Detach tab from source window synchronously on frame 0!
+    const serializedTab = JSON.stringify([tab]);
+    // Detach entire tab (including any split panes!) synchronously on frame 0 into 1 pop-out window!
     get().closeTab(tabId);
-    for (let i = 0; i < panes.length; i++) {
-      const pane = panes[i];
-      await apiPopoutTerminalWindow({
-        kind: pane.kind,
-        hostId: pane.hostId ?? null,
-        shellId: pane.shellProfile?.id ?? null,
-        sessionId: pane.sessionId ?? null,
-        title: pane.title,
-        vaultKind: pane.vaultKind ?? null,
-        vaultName: pane.vaultName ?? null,
-        x: pos?.x != null ? pos.x + i * 28 : null,
-        y: pos?.y != null ? pos.y + i * 28 : null,
-        tearOffDrag: i === 0 ? (pos?.tearOffDrag ?? false) : false,
-      });
-    }
+    await apiPopoutTerminalWindow({
+      kind: primaryPane.kind,
+      hostId: primaryPane.hostId ?? null,
+      shellId: primaryPane.shellProfile?.id ?? null,
+      sessionId: primaryPane.sessionId ?? null,
+      title: tab.title,
+      vaultKind: tab.vaultKind ?? primaryPane.vaultKind ?? null,
+      vaultName: tab.vaultName ?? primaryPane.vaultName ?? null,
+      tabsJson: serializedTab,
+      x: pos?.x ?? null,
+      y: pos?.y ?? null,
+      tearOffDrag: pos?.tearOffDrag ?? false,
+    });
   },
 
   splitPane: (tabId, targetPaneId, direction, partialPane) => {

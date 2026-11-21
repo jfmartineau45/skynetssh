@@ -335,17 +335,13 @@ export const apiPopoutTerminalWindow = (params: {
   title: string;
   vaultKind?: string | null;
   vaultName?: string | null;
+  tabsJson?: string | null;
   x?: number | null;
   y?: number | null;
   tearOffDrag?: boolean | null;
 }) => invoke<string>("window_popout_terminal", params);
 
 export const apiDockPopoutBackToMain = (params: {
-  kind: "ssh" | "local";
-  hostId?: string | null;
-  shellId?: string | null;
-  sessionId?: string | null;
-  title: string;
-  vaultKind?: string | null;
-  vaultName?: string | null;
+  tabsJson: string;
+  closeWindow: boolean;
 }) => invoke<void>("window_dock_back_to_main", params);

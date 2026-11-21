@@ -196,6 +196,16 @@ export const CommandPalette: React.FC = () => {
             ? dockPopoutToMain(activeTab.id)
             : popoutTabToWindow(activeTab.id),
       });
+      if (inPopout && tabs.length > 1) {
+        list.push({
+          id: "win-dock-all",
+          category: "Window",
+          title: `Dock All (${tabs.length}) Pop-Out Tabs Back to Main Window`,
+          subtitle: "Transfer every open console & split pane in this window back to Main",
+          icon: <ExternalLink className="w-4 h-4 text-emerald-400" />,
+          run: () => dockPopoutToMain(),
+        });
+      }
     }
 
     list.push({
