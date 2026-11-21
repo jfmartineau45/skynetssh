@@ -16,6 +16,8 @@ pub struct GroupRecord {
 pub struct HostRecord {
     pub id: String,
     pub label: String,
+    #[serde(default = "default_protocol")]
+    pub protocol: String, // "ssh" | "rdp"
     pub address: String,
     pub port: u16,
     pub username: String,
@@ -27,6 +29,16 @@ pub struct HostRecord {
     pub jump_host_id: Option<String>,
     pub startup_snippet_id: Option<String>,
     pub startup_command: Option<String>,
+    #[serde(default)]
+    pub rdp_domain: Option<String>,
+    #[serde(default)]
+    pub rdp_display_mode: Option<String>, // "smart" | "fullscreen" | "multimon"
+    #[serde(default)]
+    pub rdp_width: Option<u32>,
+    #[serde(default)]
+    pub rdp_height: Option<u32>,
+    #[serde(default)]
+    pub rdp_ignore_cert: Option<bool>,
     #[serde(default = "default_keepalive")]
     pub keepalive_interval_secs: u64,
     pub notes: Option<String>,
@@ -34,8 +46,21 @@ pub struct HostRecord {
     pub updated_at: i64,
 }
 
+fn default_protocol() -> String {
+    "ssh".into()
+}
+
 fn default_keepalive() -> u64 {
     30
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RdpLaunchResult {
+    pub host_id: String,
+    pub tunneled: bool,
+    pub bastion_label: Option<String>,
+    pub local_port: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

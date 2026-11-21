@@ -6,6 +6,8 @@ export type ThemeId =
   | "t800-hud";
 
 export type AuthMethod = "password" | "key" | "agent";
+export type HostProtocol = "ssh" | "rdp";
+export type RdpDisplayMode = "smart" | "fullscreen" | "multimon";
 
 export interface GroupRecord {
   id: string;
@@ -19,6 +21,7 @@ export interface GroupRecord {
 export interface HostRecord {
   id: string;
   label: string;
+  protocol?: HostProtocol;
   address: string;
   port: number;
   username: string;
@@ -30,10 +33,22 @@ export interface HostRecord {
   jumpHostId?: string | null;
   startupSnippetId?: string | null;
   startupCommand?: string | null;
+  rdpDomain?: string | null;
+  rdpDisplayMode?: RdpDisplayMode | null;
+  rdpWidth?: number | null;
+  rdpHeight?: number | null;
+  rdpIgnoreCert?: boolean | null;
   keepaliveIntervalSecs: number;
   notes?: string | null;
   lastConnectedAt?: number | null;
   updatedAt: number;
+}
+
+export interface RdpLaunchResult {
+  hostId: string;
+  tunneled: boolean;
+  bastionLabel?: string | null;
+  localPort?: number | null;
 }
 
 export interface HostProbeResult {

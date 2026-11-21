@@ -12,6 +12,7 @@ import {
   X,
   ChevronDown,
   Server,
+  Monitor,
   Zap,
   Users,
   User,
@@ -250,7 +251,7 @@ export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
 
   const looksLikeSshTarget =
     menuQuery.includes("@") ||
-    menuQuery.trim().startsWith("ssh ") ||
+    /^(?:ssh|rdp|mstsc)\b/i.test(menuQuery.trim()) ||
     (menuQuery.includes(".") && !menuQuery.includes(" "));
   const parsedQuickSsh = looksLikeSshTarget
     ? parseSshConnectionString(menuQuery)
@@ -258,16 +259,21 @@ export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
 
   const handleQuickSshConnectAndSave = async () => {
     if (!parsedQuickSsh?.address) return;
+    const isRdp = parsedQuickSsh.protocol === "rdp";
     const saved = await saveHost({
       id: crypto.randomUUID(),
       label: parsedQuickSsh.address,
+      protocol: isRdp ? "rdp" : "ssh",
       address: parsedQuickSsh.address,
-      port: parsedQuickSsh.port ?? 22,
-      username: parsedQuickSsh.username ?? "root",
-      authMethod: keys.length > 0 ? "key" : "password",
-      keyId: keys[0]?.id ?? null,
+      port: parsedQuickSsh.port ?? (isRdp ? 3389 : 22),
+      username: parsedQuickSsh.username ?? (isRdp ? "Administrator" : "root"),
+      authMethod: isRdp ? "password" : keys.length > 0 ? "key" : "password",
+      keyId: !isRdp ? keys[0]?.id ?? null : null,
       groupId: null,
-      tags: [],
+      tags: isRdp ? ["rdp"] : [],
+      rdpDomain: parsedQuickSsh.domain ?? null,
+      rdpDisplayMode: isRdp ? "smart" : null,
+      rdpIgnoreCert: isRdp ? true : null,
       keepaliveIntervalSecs: 30,
       updatedAt: Date.now(),
     });
@@ -653,7 +659,7 @@ export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
                   {filteredHosts.length > 0 && (
                     <>
                       <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-                        {isTeamVault ? "Team" : "Personal"} SSH Hosts ({filteredHosts.length})
+                        {isTeamVault ? "Team" : "Personal"} Hosts ({filteredHosts.length})
                       </div>
                       {filteredHosts.map((h) => (
                         <button
@@ -665,10 +671,19 @@ export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
                           className="w-full flex items-center justify-between gap-2 px-3 py-1.5 text-xs text-left text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition"
                         >
                           <div className="flex items-center gap-2.5 min-w-0">
-                            <Server className="w-3.5 h-3.5 text-[var(--accent-primary)] shrink-0" />
+                            {h.protocol === "rdp" ? (
+                              <Monitor className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                            ) : (
+                              <Server className="w-3.5 h-3.5 text-[var(--accent-primary)] shrink-0" />
+                            )}
                             <span className="truncate font-medium">
                               {h.label}
                             </span>
+                            {h.protocol === "rdp" && (
+                              <span className="px-1 py-0.2 rounded bg-sky-500/20 text-[9px] font-bold text-sky-300 shrink-0">
+                                RDP
+                              </span>
+                            )}
                           </div>
                           <span className="text-[10px] font-mono text-[var(--text-muted)] shrink-0">
                             {h.username}@{h.address}

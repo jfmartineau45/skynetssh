@@ -5,6 +5,7 @@ import type {
   GroupRecord,
   HostProbeResult,
   HostRecord,
+  RdpLaunchResult,
   ShellProfile,
   SftpEntry,
   SnippetRecord,
@@ -251,6 +252,9 @@ export const apiRespondHostKeyPrompt = (requestId: string, accept: boolean) =>
 
 export const apiProbeHost = (hostId: string) =>
   invoke<HostProbeResult>("ssh_probe_host", { hostId });
+
+export const apiLaunchRdp = (hostId: string) =>
+  invoke<RdpLaunchResult>("rdp_launch", { hostId });
 
 /* ─── SFTP File Browser (Local & Remote) ─── */
 export const apiLocalListDir = (path?: string | null) =>

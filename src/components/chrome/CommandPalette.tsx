@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   Search,
   Server,
+  Monitor,
   Terminal,
   FolderSync,
   ArrowLeftRight,
@@ -104,15 +105,20 @@ export const CommandPalette: React.FC = () => {
         : undefined;
 
     for (const h of hosts) {
+      const isRdp = h.protocol === "rdp";
       list.push({
-        id: `ssh-${h.id}`,
-        category: "SSH Connect",
-        title: `Connect: ${h.label}`,
-        subtitle: `${h.username}@${h.address}:${h.port} ${h.tags.map((t) => `#${t}`).join(" ")}`,
-        icon: <Server className="w-4 h-4 text-[var(--accent-primary)]" />,
+        id: `host-${h.id}`,
+        category: isRdp ? "Windows RDP" : "SSH Connect",
+        title: isRdp ? `Launch RDP: ${h.label}` : `Connect: ${h.label}`,
+        subtitle: `${isRdp && h.rdpDomain ? `${h.rdpDomain}\\` : ""}${h.username}@${h.address}:${h.port} ${h.tags.map((t) => `#${t}`).join(" ")}`,
+        icon: isRdp ? (
+          <Monitor className="w-4 h-4 text-sky-400" />
+        ) : (
+          <Server className="w-4 h-4 text-[var(--accent-primary)]" />
+        ),
         run: () => openHostTerminal(h),
       });
-      if (activeTab && activeTab.kind === "terminal" && activePane) {
+      if (!isRdp && activeTab && activeTab.kind === "terminal" && activePane) {
         list.push({
           id: `split-${h.id}`,
           category: "Split Pane",
@@ -127,14 +133,16 @@ export const CommandPalette: React.FC = () => {
             }),
         });
       }
-      list.push({
-        id: `sftp-${h.id}`,
-        category: "SFTP",
-        title: `Open Dual-Pane SFTP: ${h.label}`,
-        subtitle: `${h.username}@${h.address}`,
-        icon: <FolderSync className="w-4 h-4 text-amber-400" />,
-        run: () => openDualSftpTab(h.id),
-      });
+      if (!isRdp) {
+        list.push({
+          id: `sftp-${h.id}`,
+          category: "SFTP",
+          title: `Open Dual-Pane SFTP: ${h.label}`,
+          subtitle: `${h.username}@${h.address}`,
+          icon: <FolderSync className="w-4 h-4 text-amber-400" />,
+          run: () => openDualSftpTab(h.id),
+        });
+      }
     }
 
     for (const sh of shells) {

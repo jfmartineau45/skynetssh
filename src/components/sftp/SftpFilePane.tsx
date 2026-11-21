@@ -538,11 +538,13 @@ export const SftpFilePane: React.FC<Props> = ({
               className="flex-1 px-2.5 py-1.5 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-subtle)] text-xs text-[var(--text-primary)] focus:outline-none focus:border-[var(--border-accent)]"
             >
               <option value="local">Local Machine (This PC)</option>
-              {hosts.map((h) => (
-                <option key={h.id} value={h.id}>
-                  SSH: {h.label} ({h.username}@{h.address})
-                </option>
-              ))}
+              {hosts
+                .filter((h) => h.protocol !== "rdp")
+                .map((h) => (
+                  <option key={h.id} value={h.id}>
+                    SSH: {h.label} ({h.username}@{h.address})
+                  </option>
+                ))}
             </select>
           </div>
         )}

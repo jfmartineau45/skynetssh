@@ -1,5 +1,6 @@
 pub mod models;
 pub mod pty;
+pub mod rdp;
 pub mod sftp;
 pub mod ssh;
 pub mod sync;
@@ -20,7 +21,7 @@ use tauri_plugin_global_shortcut::{
 
 use crate::models::{
     ActiveTunnelRuntime, DirectoryListing, GitSyncStatus, GroupRecord, HostProbeResult, HostRecord,
-    ShellProfile, SnippetRecord, SshFolderScan, SshKeyRecord, TotpSetupPayload,
+    RdpLaunchResult, ShellProfile, SnippetRecord, SshFolderScan, SshKeyRecord, TotpSetupPayload,
     TransferProgressEvent, TunnelRecord, VaultSnapshot, VaultStatus,
 };
 use crate::pty::PtyManager;
@@ -170,6 +171,7 @@ async fn vault_lock(state: State<'_, AppState>) -> CmdResult<()> {
     state.tunnels.stop_all().await;
     state.ssh.disconnect_all().await;
     sftp::cleanup_temp_edits();
+    rdp::cleanup_temp_rdp_files();
     Ok(())
 }
 
@@ -183,6 +185,7 @@ async fn vault_forget_device(state: State<'_, AppState>) -> CmdResult<VaultStatu
     state.tunnels.stop_all().await;
     state.ssh.disconnect_all().await;
     sftp::cleanup_temp_edits();
+    rdp::cleanup_temp_rdp_files();
     Ok(status)
 }
 
@@ -604,7 +607,7 @@ async fn ssh_respond_host_key(
 
 #[tauri::command]
 async fn ssh_probe_host(host_id: String, state: State<'_, AppState>) -> CmdResult<HostProbeResult> {
-    let (host, group_name) = {
+    let (host, group_name, bastion) = {
         let guard = state.vault.lock().map_err(err_str)?;
         let h = guard.get_host(&host_id).map_err(err_str)?;
         let g_name = if let Some(gid) = &h.group_id {
@@ -615,17 +618,67 @@ async fn ssh_probe_host(host_id: String, state: State<'_, AppState>) -> CmdResul
         } else {
             None
         };
-        (h, g_name)
+        let jump_h = h
+            .jump_host_id
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .and_then(|jid| guard.get_host(jid).ok());
+        (h, g_name, jump_h)
     };
 
-    Ok(ssh::probe_host_reachability(
-        host.id,
+    let default_port = if host.protocol == "rdp" { 3389 } else { 22 };
+    let target_port = if host.port == 0 { default_port } else { host.port };
+
+    let direct = ssh::probe_host_reachability(
+        host.id.clone(),
         host.address,
-        host.port,
+        target_port,
         host.label,
-        group_name,
+        group_name.clone(),
     )
-    .await)
+    .await;
+
+    if direct.online {
+        return Ok(direct);
+    }
+
+    // If machine sits on a private LAN behind an SSH Bastion/Jump Host, verify Bastion reachability!
+    if let Some(bh) = bastion {
+        let b_res = ssh::probe_host_reachability(
+            host.id,
+            bh.address,
+            if bh.port == 0 { 22 } else { bh.port },
+            bh.label.clone(),
+            group_name,
+        )
+        .await;
+        if b_res.online {
+            return Ok(HostProbeResult {
+                detail: match b_res.latency_ms {
+                    Some(ms) => format!("Via {} · {ms}ms", bh.label),
+                    None => format!("Via {}", bh.label),
+                },
+                ..b_res
+            });
+        }
+    }
+
+    Ok(direct)
+}
+
+#[tauri::command]
+async fn rdp_launch(
+    host_id: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> CmdResult<RdpLaunchResult> {
+    let host = {
+        let guard = state.vault.lock().map_err(err_str)?;
+        guard.get_host(&host_id).map_err(err_str)?
+    };
+    rdp::launch_rdp_session(host, state.ssh.clone(), state.vault.clone(), app)
+        .await
+        .map_err(err_str)
 }
 
 /* ─── SFTP Commands ─── */
@@ -1141,6 +1194,7 @@ async fn window_dock_back_to_main(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     sftp::cleanup_temp_edits();
+    rdp::cleanup_temp_rdp_files();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -1287,6 +1341,7 @@ pub fn run() {
             ssh_close_shell,
             ssh_respond_host_key,
             ssh_probe_host,
+            rdp_launch,
             sftp_local_list,
             sftp_local_mkdir,
             sftp_local_delete,

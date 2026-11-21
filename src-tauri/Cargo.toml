@@ -1,6 +1,6 @@
 [package]
 name = "skynet-ssh"
-version = "0.2.5"
+version = "0.3.0"
 description = "SkynetSSH — Native Tauri v2 SSH, SFTP, Tunnel & Multi-Pane Terminal Client"
 authors = ["SkynetSSH"]
 edition = "2021"

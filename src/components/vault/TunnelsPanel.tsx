@@ -248,11 +248,13 @@ export const TunnelsPanel: React.FC = () => {
                 className="w-full px-3 py-2 rounded-lg bg-black/40 border border-[var(--border-subtle)] text-xs"
               >
                 <option value="">-- Select Host --</option>
-                {hosts.map((h) => (
-                  <option key={h.id} value={h.id}>
-                    {h.label} ({h.username}@{h.address})
-                  </option>
-                ))}
+                {hosts
+                  .filter((h) => h.protocol !== "rdp")
+                  .map((h) => (
+                    <option key={h.id} value={h.id}>
+                      {h.label} ({h.username}@{h.address})
+                    </option>
+                  ))}
               </select>
             </div>
 

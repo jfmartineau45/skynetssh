@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Server,
+  Monitor,
   Folder,
   Plus,
   Search,
@@ -26,14 +27,19 @@ import {
   ArrowDown,
   X,
 } from "lucide-react";
-import type { GroupRecord, HostRecord } from "../../types/models";
+import type { GroupRecord, HostProtocol, HostRecord } from "../../types/models";
 import { useVaultStore } from "../../store/useVaultStore";
 import { useWorkspaceStore } from "../../store/useWorkspaceStore";
 import {
   HostEditorDrawer,
   parseSshConnectionString,
 } from "./HostEditorDrawer";
-import { apiImportSshConfig, apiProbeHost, isTauriRuntime } from "../../lib/ipc";
+import {
+  apiImportSshConfig,
+  apiLaunchRdp,
+  apiProbeHost,
+  isTauriRuntime,
+} from "../../lib/ipc";
 
 const TENANT_COLORS = [
   { hex: "#38bdf8", label: "Sky" },
@@ -82,6 +88,8 @@ export const HostsPanel: React.FC = () => {
 
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
+  const [protocolFilter, setProtocolFilter] = useState<"all" | HostProtocol>("all");
+  const [drawerProtocol, setDrawerProtocol] = useState<HostProtocol>("ssh");
   const [search, setSearch] = useState("");
   const [quickConnectInput, setQuickConnectInput] = useState("");
 
@@ -259,6 +267,8 @@ export const HostsPanel: React.FC = () => {
   const visibleHosts = useMemo(() => {
     const q = search.trim().toLowerCase();
     const filtered = hosts.filter((h) => {
+      const proto: HostProtocol = h.protocol === "rdp" ? "rdp" : "ssh";
+      if (protocolFilter !== "all" && proto !== protocolFilter) return false;
       if (selectedGroupId && h.groupId !== selectedGroupId) return false;
       if (selectedTag && !h.tags.includes(selectedTag)) return false;
       if (!q) return true;
@@ -267,6 +277,8 @@ export const HostsPanel: React.FC = () => {
         h.label.toLowerCase().includes(q) ||
         h.address.toLowerCase().includes(q) ||
         h.username.toLowerCase().includes(q) ||
+        (h.rdpDomain ?? "").toLowerCase().includes(q) ||
+        proto.includes(q) ||
         gName.toLowerCase().includes(q) ||
         h.tags.some((t) => t.toLowerCase().includes(q))
       );
@@ -285,7 +297,34 @@ export const HostsPanel: React.FC = () => {
       }
       return a.label.toLowerCase().localeCompare(b.label.toLowerCase()) * dir;
     });
-  }, [hosts, selectedGroupId, selectedTag, search, groupMap, sortKey, sortAsc]);
+  }, [
+    hosts,
+    protocolFilter,
+    selectedGroupId,
+    selectedTag,
+    search,
+    groupMap,
+    sortKey,
+    sortAsc,
+  ]);
+
+  const handleLaunchHost = async (h: HostRecord) => {
+    if (h.protocol === "rdp") {
+      if (!isTauriRuntime()) return;
+      try {
+        const res = await apiLaunchRdp(h.id);
+        flashToast(
+          res.tunneled
+            ? `Launched RDP -> ${h.label} (SSH Tunnel via ${res.bastionLabel ?? "Bastion"} :${res.localPort})`
+            : `Launched Windows RDP -> ${h.label}`
+        );
+      } catch (e) {
+        flashToast(`RDP launch error: ${String(e)}`);
+      }
+      return;
+    }
+    openHostTerminal(h);
+  };
 
   const tenantSections = useMemo(() => {
     if (!groupByTenant || selectedGroupId) {
@@ -456,22 +495,27 @@ export const HostsPanel: React.FC = () => {
     flashToast(`Deleted ${count} machine(s)`);
   };
 
-  /** Termius-style Quick Connect Bar: `ssh user@host -p 2222` -> auto-saves to Vault & connects immediately! */
+  /** Quick Connect Bar: `ssh user@host -p 2222` or `rdp://DOMAIN\Admin@host` -> auto-saves & connects! */
   const handleQuickConnectSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const parsed = parseSshConnectionString(quickConnectInput);
     if (!parsed?.address) return;
+    const isRdp = parsed.protocol === "rdp";
 
     const record: HostRecord = {
       id: crypto.randomUUID(),
       label: parsed.address,
+      protocol: isRdp ? "rdp" : "ssh",
       address: parsed.address,
-      port: parsed.port ?? 22,
-      username: parsed.username ?? "root",
-      authMethod: keys.length > 0 ? "key" : "password",
-      keyId: keys[0]?.id ?? null,
+      port: parsed.port ?? (isRdp ? 3389 : 22),
+      username: parsed.username ?? (isRdp ? "Administrator" : "root"),
+      authMethod: isRdp ? "password" : keys.length > 0 ? "key" : "password",
+      keyId: !isRdp ? keys[0]?.id ?? null : null,
       groupId: selectedGroupId,
-      tags: selectedTag ? [selectedTag] : [],
+      tags: selectedTag ? [selectedTag] : isRdp ? ["rdp"] : [],
+      rdpDomain: parsed.domain ?? null,
+      rdpDisplayMode: isRdp ? "smart" : null,
+      rdpIgnoreCert: isRdp ? true : null,
       keepaliveIntervalSecs: 30,
       updatedAt: Date.now(),
     };
@@ -479,7 +523,7 @@ export const HostsPanel: React.FC = () => {
     if (!isReadOnly) {
       const saved = await saveHost(record);
       setQuickConnectInput("");
-      openHostTerminal(saved);
+      void handleLaunchHost(saved);
     }
   };
 
@@ -538,8 +582,8 @@ export const HostsPanel: React.FC = () => {
                 onChange={(e) => setQuickConnectInput(e.target.value)}
                 placeholder={
                   isReadOnly
-                    ? "Read-Only Vault Member Mode (SSH & SFTP enabled)"
-                    : "Quick connect & save: ssh user@host -p 22"
+                    ? "Read-Only Vault Member Mode (SSH, RDP & SFTP enabled)"
+                    : "Quick connect & save: ssh user@host or rdp://Admin@host"
                 }
                 className="w-full pl-8 pr-3 py-1.5 rounded-lg bg-black/40 border border-[var(--border-subtle)] focus:border-[var(--border-accent)] text-xs text-white placeholder-[var(--text-muted)] focus:outline-none disabled:opacity-60"
               />
@@ -623,6 +667,20 @@ export const HostsPanel: React.FC = () => {
                 <button
                   onClick={() => {
                     setEditingHost(null);
+                    setDrawerProtocol("rdp");
+                    setDrawerOpen(true);
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-600/20 hover:bg-sky-600/35 border border-sky-400/40 text-xs font-semibold text-sky-200 transition"
+                  title="Add Windows Remote Desktop (RDP) Server"
+                >
+                  <Monitor className="w-3.5 h-3.5 text-sky-300" />
+                  <span>+ RDP</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setEditingHost(null);
+                    setDrawerProtocol("ssh");
                     setDrawerOpen(true);
                   }}
                   className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-primary-hover)] text-xs font-semibold text-white shadow-md transition"
@@ -638,6 +696,31 @@ export const HostsPanel: React.FC = () => {
         {/* Filter Bar: Tenant Pills + Tag Pills + Search */}
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-1.5 flex-wrap text-xs">
+            {hosts.some((h) => h.protocol === "rdp") && (
+              <div className="flex items-center p-0.5 mr-1 rounded-md bg-black/35 border border-[var(--border-subtle)] text-[11px]">
+                {(
+                  [
+                    { id: "all", label: "All" },
+                    { id: "ssh", label: "SSH" },
+                    { id: "rdp", label: "RDP" },
+                  ] as const
+                ).map((pf) => (
+                  <button
+                    key={pf.id}
+                    onClick={() => setProtocolFilter(pf.id)}
+                    className={`px-2 py-0.5 rounded font-semibold transition ${
+                      protocolFilter === pf.id
+                        ? pf.id === "rdp"
+                          ? "bg-sky-600 text-white"
+                          : "bg-white/15 text-white"
+                        : "text-[var(--text-muted)] hover:text-white"
+                    }`}
+                  >
+                    {pf.label}
+                  </button>
+                ))}
+              </div>
+            )}
             <button
               onClick={() => setSelectedGroupId(null)}
               className={`px-2.5 py-0.5 rounded-md font-semibold transition ${
@@ -1079,6 +1162,8 @@ export const HostsPanel: React.FC = () => {
                         <tbody className="divide-y divide-white/[0.04]">
                           {sec.items.map((h) => {
                             const checked = selectedIds.has(h.id);
+                            const isRdp = h.protocol === "rdp";
+                            const defaultPort = isRdp ? 3389 : 22;
                             const keyName = keys.find(
                               (k) => k.id === h.keyId
                             )?.name;
@@ -1088,13 +1173,17 @@ export const HostsPanel: React.FC = () => {
                             const grp = h.groupId
                               ? groupMap.get(h.groupId)
                               : null;
+                            const userDisplay =
+                              isRdp && h.rdpDomain
+                                ? `${h.rdpDomain}\\${h.username}`
+                                : h.username;
 
                             return (
                               <tr
                                 key={h.id}
                                 onMouseEnter={() => handleHostHoverEnter(h)}
                                 onMouseLeave={() => handleHostHoverLeave(h.id)}
-                                onDoubleClick={() => openHostTerminal(h)}
+                                onDoubleClick={() => void handleLaunchHost(h)}
                                 className={`group cursor-pointer transition ${
                                   checked
                                     ? "bg-[var(--accent-glow)]/40"
@@ -1117,17 +1206,26 @@ export const HostsPanel: React.FC = () => {
 
                                 <td className="px-3 py-2 font-semibold text-[var(--text-primary)]">
                                   <div className="flex items-center gap-2">
-                                    <Server className="w-3.5 h-3.5 text-[var(--accent-primary)] shrink-0" />
+                                    {isRdp ? (
+                                      <Monitor className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                                    ) : (
+                                      <Server className="w-3.5 h-3.5 text-[var(--accent-primary)] shrink-0" />
+                                    )}
                                     <span className="truncate max-w-[200px]">
                                       {h.label}
                                     </span>
+                                    {isRdp && (
+                                      <span className="px-1.5 py-0.2 rounded bg-sky-500/20 border border-sky-400/35 text-[9px] font-bold uppercase tracking-wider text-sky-300 shrink-0">
+                                        RDP
+                                      </span>
+                                    )}
                                     {renderHoverProbeBadge(h)}
                                   </div>
                                 </td>
 
                                 <td className="px-3 py-2 font-mono text-[11px] text-[var(--text-secondary)]">
-                                  {h.username}@{h.address}
-                                  {h.port !== 22 ? `:${h.port}` : ""}
+                                  {userDisplay}@{h.address}
+                                  {h.port !== defaultPort ? `:${h.port}` : ""}
                                 </td>
 
                                 {!groupByTenant && (
@@ -1155,13 +1253,18 @@ export const HostsPanel: React.FC = () => {
                                   <div className="flex items-center gap-1.5 flex-wrap">
                                     <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-white/5 text-[10px] text-[var(--text-secondary)]">
                                       <KeyRound className="w-2.5 h-2.5 text-amber-400" />
-                                      {h.authMethod === "key"
+                                      {isRdp
+                                        ? h.password
+                                          ? "Vault Creds"
+                                          : "Prompt"
+                                        : h.authMethod === "key"
                                         ? keyName || "SSH Key"
                                         : h.authMethod}
                                     </span>
                                     {jumpHost && (
                                       <span className="px-1.5 py-0.5 rounded bg-cyan-500/15 text-[10px] text-cyan-300">
-                                        via {jumpHost.label}
+                                        {isRdp ? "SSH tunnel via " : "via "}
+                                        {jumpHost.label}
                                       </span>
                                     )}
                                   </div>
@@ -1191,23 +1294,29 @@ export const HostsPanel: React.FC = () => {
                                     <button
                                       onClick={(e) => {
                                         e.stopPropagation();
-                                        openHostTerminal(h);
+                                        void handleLaunchHost(h);
                                       }}
-                                      className="inline-flex items-center gap-1 px-2 py-1 rounded bg-[var(--accent-primary)] hover:bg-[var(--accent-primary-hover)] text-[11px] font-semibold text-white transition"
+                                      className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-semibold text-white transition ${
+                                        isRdp
+                                          ? "bg-sky-600 hover:bg-sky-500"
+                                          : "bg-[var(--accent-primary)] hover:bg-[var(--accent-primary-hover)]"
+                                      }`}
                                     >
                                       <Play className="w-2.5 h-2.5" />
-                                      <span>SSH</span>
+                                      <span>{isRdp ? "RDP" : "SSH"}</span>
                                     </button>
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        openDualSftpTab(h.id);
-                                      }}
-                                      className="inline-flex items-center gap-1 px-2 py-1 rounded bg-white/5 hover:bg-white/10 text-[11px] text-amber-300 transition"
-                                    >
-                                      <FolderSync className="w-3 h-3" />
-                                      <span>SFTP</span>
-                                    </button>
+                                    {!isRdp && (
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          openDualSftpTab(h.id);
+                                        }}
+                                        className="inline-flex items-center gap-1 px-2 py-1 rounded bg-white/5 hover:bg-white/10 text-[11px] text-amber-300 transition"
+                                      >
+                                        <FolderSync className="w-3 h-3" />
+                                        <span>SFTP</span>
+                                      </button>
+                                    )}
                                     {!isReadOnly && (
                                       <>
                                         <button
@@ -1256,18 +1365,24 @@ export const HostsPanel: React.FC = () => {
                     <div className="p-3.5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
                       {sec.items.map((h) => {
                         const checked = selectedIds.has(h.id);
+                        const isRdp = h.protocol === "rdp";
+                        const defaultPort = isRdp ? 3389 : 22;
                         const keyName = keys.find(
                           (k) => k.id === h.keyId
                         )?.name;
                         const jumpHost = hosts.find(
                           (j) => j.id === h.jumpHostId
                         );
+                        const userDisplay =
+                          isRdp && h.rdpDomain
+                            ? `${h.rdpDomain}\\${h.username}`
+                            : h.username;
                         return (
                           <div
                             key={h.id}
                             onMouseEnter={() => handleHostHoverEnter(h)}
                             onMouseLeave={() => handleHostHoverLeave(h.id)}
-                            onDoubleClick={() => openHostTerminal(h)}
+                            onDoubleClick={() => void handleLaunchHost(h)}
                             className={`group relative flex flex-col justify-between p-3.5 rounded-xl bg-[var(--bg-panel)] hover:bg-[var(--bg-elevated)] border cursor-pointer transition shadow-xs ${
                               checked
                                 ? "border-[var(--accent-primary)] ring-1 ring-[var(--accent-primary)]"
@@ -1277,16 +1392,33 @@ export const HostsPanel: React.FC = () => {
                             <div>
                               <div className="flex items-start justify-between gap-2 mb-2">
                                 <div className="flex items-center gap-2.5 min-w-0">
-                                  <div className="p-2 rounded-lg bg-[var(--accent-glow)] border border-[var(--border-accent)] text-[var(--accent-primary)] shrink-0">
-                                    <Server className="w-4 h-4" />
+                                  <div
+                                    className={`p-2 rounded-lg shrink-0 border ${
+                                      isRdp
+                                        ? "bg-sky-500/15 border-sky-400/45 text-sky-400"
+                                        : "bg-[var(--accent-glow)] border-[var(--border-accent)] text-[var(--accent-primary)]"
+                                    }`}
+                                  >
+                                    {isRdp ? (
+                                      <Monitor className="w-4 h-4" />
+                                    ) : (
+                                      <Server className="w-4 h-4" />
+                                    )}
                                   </div>
                                   <div className="min-w-0">
-                                    <div className="text-xs font-bold text-[var(--text-primary)] truncate">
-                                      {h.label}
+                                    <div className="flex items-center gap-1.5">
+                                      <div className="text-xs font-bold text-[var(--text-primary)] truncate">
+                                        {h.label}
+                                      </div>
+                                      {isRdp && (
+                                        <span className="px-1 py-0.2 rounded bg-sky-500/20 text-[9px] font-bold uppercase text-sky-300 shrink-0">
+                                          RDP
+                                        </span>
+                                      )}
                                     </div>
                                     <div className="text-[11px] font-mono text-[var(--text-secondary)] truncate">
-                                      {h.username}@{h.address}
-                                      {h.port !== 22 ? `:${h.port}` : ""}
+                                      {userDisplay}@{h.address}
+                                      {h.port !== defaultPort ? `:${h.port}` : ""}
                                     </div>
                                   </div>
                                 </div>
@@ -1310,13 +1442,18 @@ export const HostsPanel: React.FC = () => {
                                 {renderHoverProbeBadge(h)}
                                 <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-white/5 text-[10px] text-[var(--text-secondary)]">
                                   <KeyRound className="w-2.5 h-2.5 text-amber-400" />
-                                  {h.authMethod === "key"
+                                  {isRdp
+                                    ? h.password
+                                      ? "Vault Creds"
+                                      : "Prompt"
+                                    : h.authMethod === "key"
                                     ? keyName || "SSH Key"
                                     : h.authMethod}
                                 </span>
                                 {jumpHost && (
                                   <span className="px-1.5 py-0.5 rounded bg-cyan-500/15 text-[10px] text-cyan-300">
-                                    via {jumpHost.label}
+                                    {isRdp ? "SSH tunnel via " : "via "}
+                                    {jumpHost.label}
                                   </span>
                                 )}
                                 {h.tags.map((t) => (
@@ -1335,23 +1472,29 @@ export const HostsPanel: React.FC = () => {
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    openHostTerminal(h);
+                                    void handleLaunchHost(h);
                                   }}
-                                  className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-[var(--accent-primary)] hover:bg-[var(--accent-primary-hover)] text-[11px] font-semibold text-white transition"
+                                  className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold text-white transition ${
+                                    isRdp
+                                      ? "bg-sky-600 hover:bg-sky-500"
+                                      : "bg-[var(--accent-primary)] hover:bg-[var(--accent-primary-hover)]"
+                                  }`}
                                 >
                                   <Play className="w-2.5 h-2.5" />
-                                  <span>SSH</span>
+                                  <span>{isRdp ? "RDP" : "SSH"}</span>
                                 </button>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    openDualSftpTab(h.id);
-                                  }}
-                                  className="flex items-center gap-1 px-2 py-1 rounded-md bg-white/5 hover:bg-white/10 text-[11px] text-amber-300 transition"
-                                >
-                                  <FolderSync className="w-3 h-3" />
-                                  <span>SFTP</span>
-                                </button>
+                                {!isRdp && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      openDualSftpTab(h.id);
+                                    }}
+                                    className="flex items-center gap-1 px-2 py-1 rounded-md bg-white/5 hover:bg-white/10 text-[11px] text-amber-300 transition"
+                                  >
+                                    <FolderSync className="w-3 h-3" />
+                                    <span>SFTP</span>
+                                  </button>
+                                )}
                               </div>
 
                               {!isReadOnly && (
@@ -1406,6 +1549,7 @@ export const HostsPanel: React.FC = () => {
         host={editingHost}
         isOpen={drawerOpen}
         defaultGroupId={selectedGroupId}
+        defaultProtocol={drawerProtocol}
         onClose={() => setDrawerOpen(false)}
       />
 

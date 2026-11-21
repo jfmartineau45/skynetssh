@@ -971,11 +971,13 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
               </>
             )}
 
-            {hosts.filter(
-              (h) =>
-                h.label.toLowerCase().includes(splitFilter.toLowerCase()) ||
-                h.address.toLowerCase().includes(splitFilter.toLowerCase())
-            ).length > 0 && (
+            {hosts
+              .filter(
+                (h) =>
+                  h.protocol !== "rdp" &&
+                  (h.label.toLowerCase().includes(splitFilter.toLowerCase()) ||
+                    h.address.toLowerCase().includes(splitFilter.toLowerCase()))
+              ).length > 0 && (
               <>
                 <div className="px-3 pt-1.5 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
                   Saved SSH Hosts

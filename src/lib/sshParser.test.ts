@@ -16,20 +16,60 @@ import {
   reorderTabList,
 } from "./windowTabs.ts";
 
-test("parseSshConnectionString handles ssh -p, host:port, and IPv6", () => {
+test("parseSshConnectionString handles ssh -p, rdp://, mstsc /v:, host:port, and IPv6", () => {
   assert.deepEqual(
     parseSshConnectionString("ssh -p 2222 ubuntu@10.0.1.5"),
-    { username: "ubuntu", address: "10.0.1.5", port: 2222 }
+    {
+      protocol: "ssh",
+      domain: undefined,
+      username: "ubuntu",
+      address: "10.0.1.5",
+      port: 2222,
+    }
+  );
+
+  assert.deepEqual(
+    parseSshConnectionString("rdp://CONTOSO\\Administrator@10.20.1.50:3390"),
+    {
+      protocol: "rdp",
+      domain: "CONTOSO",
+      username: "Administrator",
+      address: "10.20.1.50",
+      port: 3390,
+    }
+  );
+
+  assert.deepEqual(
+    parseSshConnectionString("mstsc /v:192.168.10.25 /f"),
+    {
+      protocol: "rdp",
+      domain: undefined,
+      username: undefined,
+      address: "192.168.10.25",
+      port: undefined,
+    }
   );
 
   assert.deepEqual(
     parseSshConnectionString("root@[2001:db8::1]:2200"),
-    { username: "root", address: "2001:db8::1", port: 2200 }
+    {
+      protocol: undefined,
+      domain: undefined,
+      username: "root",
+      address: "2001:db8::1",
+      port: 2200,
+    }
   );
 
   assert.deepEqual(
     parseSshConnectionString("admin@2001:db8::42"),
-    { username: "admin", address: "2001:db8::42", port: undefined }
+    {
+      protocol: undefined,
+      domain: undefined,
+      username: "admin",
+      address: "2001:db8::42",
+      port: undefined,
+    }
   );
 });
 

@@ -11,6 +11,7 @@ import type {
 } from "../types/models";
 import {
   apiDockPopoutBackToMain,
+  apiLaunchRdp,
   apiPopoutTerminalWindow,
   apiPtyWrite,
   apiSshWrite,
@@ -409,6 +410,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   setCommandPaletteOpen: (open) => set({ commandPaletteOpen: open }),
 
   openHostTerminal: (host) => {
+    if (host.protocol === "rdp") {
+      if (isTauriRuntime()) {
+        void apiLaunchRdp(host.id);
+      }
+      return;
+    }
     const activeVault = useVaultStore.getState().status?.activeProfile;
     const paneId = uid();
     const tabId = uid();

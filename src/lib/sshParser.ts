@@ -1,12 +1,31 @@
-/** Parses pasted strings like `ssh -p 2222 ubuntu@10.0.1.5`, `root@[2001:db8::1]:2222`, or `host:2200` */
+/** Parses pasted strings like `ssh -p 2222 ubuntu@10.0.1.5`, `rdp://CONTOSO\Admin@10.20.1.50:3389`, `mstsc /v:10.20.1.50`, `root@[2001:db8::1]:2222`, or `host:2200` */
 export function parseSshConnectionString(raw: string): {
+  protocol?: "ssh" | "rdp";
+  domain?: string;
   username?: string;
   address?: string;
   port?: number;
 } | null {
   let cleaned = raw.trim();
   if (!cleaned) return null;
-  cleaned = cleaned.replace(/^ssh\s+/i, "");
+
+  let protocol: "ssh" | "rdp" | undefined;
+  if (/^rdp:\/\//i.test(cleaned)) {
+    protocol = "rdp";
+    cleaned = cleaned.replace(/^rdp:\/\//i, "").replace(/\/+$/, "");
+  } else if (/^mstsc(?:\.exe)?\s+/i.test(cleaned)) {
+    protocol = "rdp";
+    cleaned = cleaned
+      .replace(/^mstsc(?:\.exe)?\s+/i, "")
+      .replace(/\/v:/i, "")
+      .trim();
+  } else if (/^ssh:\/\//i.test(cleaned)) {
+    protocol = "ssh";
+    cleaned = cleaned.replace(/^ssh:\/\//i, "").replace(/\/+$/, "");
+  } else if (/^ssh\s+/i.test(cleaned)) {
+    protocol = "ssh";
+    cleaned = cleaned.replace(/^ssh\s+/i, "");
+  }
 
   let port: number | undefined;
   const portFlag = cleaned.match(/(?:^|\s)-p\s*(\d+)/);
@@ -15,17 +34,27 @@ export function parseSshConnectionString(raw: string): {
     cleaned = cleaned.replace(portFlag[0], " ").trim();
   }
 
-  const tokens = cleaned.split(/\s+/).filter((t) => !t.startsWith("-"));
+  const tokens = cleaned
+    .split(/\s+/)
+    .filter((t) => !t.startsWith("-") && !t.startsWith("/"));
   const target =
     tokens.find((t) => t.includes("@") || t.includes(".") || t.includes(":")) ??
     tokens[0];
   if (!target) return null;
 
+  let domain: string | undefined;
   let username: string | undefined;
   let hostPart = target;
   const atIdx = target.lastIndexOf("@");
   if (atIdx !== -1) {
-    username = target.slice(0, atIdx);
+    const rawUser = target.slice(0, atIdx);
+    const slashIdx = rawUser.indexOf("\\");
+    if (slashIdx !== -1) {
+      domain = rawUser.slice(0, slashIdx) || undefined;
+      username = rawUser.slice(slashIdx + 1) || undefined;
+    } else {
+      username = rawUser;
+    }
     hostPart = target.slice(atIdx + 1);
   }
 
@@ -39,7 +68,8 @@ export function parseSshConnectionString(raw: string): {
         const parsedPort = parseInt(rest.slice(1), 10);
         if (!Number.isNaN(parsedPort)) port = parsedPort;
       }
-      return { username, address: ipv6, port };
+      if (port === 3389 && !protocol) protocol = "rdp";
+      return { protocol, domain, username, address: ipv6, port };
     }
   }
 
@@ -53,5 +83,6 @@ export function parseSshConnectionString(raw: string): {
     }
   }
 
-  return { username, address: hostPart, port };
+  if (port === 3389 && !protocol) protocol = "rdp";
+  return { protocol, domain, username, address: hostPart, port };
 }
