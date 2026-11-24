@@ -1,7 +1,7 @@
 {
   "name": "skynet-ssh",
   "private": true,
-  "version": "1.0.2",
+  "version": "1.0.0",
   "description": "SkynetSSH — Native Tauri v2 SSH, RDP, SFTP, Tunnel & Multi-Pane Terminal Client",
   "type": "module",
   "scripts": {
