@@ -15,7 +15,6 @@ import {
   Search,
   Radio,
   Terminal as TerminalIcon,
-  Server,
   ExternalLink,
   PanelTop,
   Zap,
@@ -30,6 +29,7 @@ import {
 import { notifyStandbyMilestone } from "../../lib/windowTabs";
 import { useVaultStore } from "../../store/useVaultStore";
 import { APP_THEMES } from "../../lib/themes";
+import { DistroIcon } from "../common/DistroIcon";
 import {
   apiMarkStandbyReady,
   apiPtyClose,
@@ -537,6 +537,14 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
     );
   };
 
+  const paneHost =
+    pane.kind === "ssh" && pane.hostId
+      ? hosts.find((h) => h.id === pane.hostId)
+      : undefined;
+  const displayPaneTitle = paneHost
+    ? paneHost.label || `${paneHost.username}@${paneHost.address}`
+    : pane.title;
+
   return (
     <div
       onMouseDown={() => setActivePane(tabId, pane.id)}
@@ -561,12 +569,12 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
             }`}
           />
           {pane.kind === "ssh" ? (
-            <Server className="w-3 h-3 text-[var(--accent-primary)] shrink-0" />
+            <DistroIcon host={paneHost} className="w-3.5 h-3.5" />
           ) : (
             <TerminalIcon className="w-3 h-3 text-emerald-400 shrink-0" />
           )}
           <span className="font-medium text-[var(--text-primary)] truncate">
-            {pane.title}
+            {displayPaneTitle}
           </span>
           {pane.kind === "ssh" && (
             <span
@@ -985,8 +993,9 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
                 {hosts
                   .filter(
                     (h) =>
-                      h.label.toLowerCase().includes(splitFilter.toLowerCase()) ||
-                      h.address.toLowerCase().includes(splitFilter.toLowerCase())
+                      h.protocol !== "rdp" &&
+                      (h.label.toLowerCase().includes(splitFilter.toLowerCase()) ||
+                        h.address.toLowerCase().includes(splitFilter.toLowerCase()))
                   )
                   .map((h) => (
                     <button
@@ -1003,7 +1012,7 @@ export const TerminalPane: React.FC<Props> = ({ tabId, pane, isActive }) => {
                       }}
                       className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-[var(--bg-hover)] text-[var(--text-primary)]"
                     >
-                      <Server className="w-3.5 h-3.5 text-[var(--accent-primary)] shrink-0" />
+                      <DistroIcon host={h} className="w-3.5 h-3.5" />
                       <div className="min-w-0">
                         <div className="truncate font-medium">{h.label}</div>
                         <div className="truncate text-[10px] text-[var(--text-muted)] font-mono">

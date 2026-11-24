@@ -1210,6 +1210,7 @@ mod tests {
             id: id.into(),
             label: label.into(),
             protocol: "ssh".into(),
+            os_icon: None,
             address: address.into(),
             port: 22,
             username: "miles".into(),

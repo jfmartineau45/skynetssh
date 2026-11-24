@@ -11,8 +11,6 @@ import {
   Square,
   X,
   ChevronDown,
-  Server,
-  Monitor,
   Zap,
   Users,
   User,
@@ -31,6 +29,7 @@ import { useWorkspaceStore, collectPanes } from "../../store/useWorkspaceStore";
 import { useVaultStore } from "../../store/useVaultStore";
 import { isTauriRuntime } from "../../lib/ipc";
 import { parseSshConnectionString } from "../../lib/sshParser";
+import { DistroIcon } from "../common/DistroIcon";
 
 export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
   isPopout = false,
@@ -490,10 +489,19 @@ export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
         )}
 
         {/* Workspace Tabs */}
-        <div className="flex items-center h-full px-1.5 gap-1 overflow-x-auto no-scrollbar">
+        <div className="flex-1 min-w-0 flex items-center h-full px-1.5 gap-1 overflow-x-auto no-scrollbar">
           {tabs.map((tab) => {
             const isActive = tab.id === activeTabId;
             const isDraggingThis = draggingTabId === tab.id;
+            const tabHost =
+              tab.kind === "terminal"
+                ? hosts.find(
+                    (h) =>
+                      h.id ===
+                      (tab.sftpDrawerHostId ??
+                        collectPanes(tab.rootNode)[0]?.hostId)
+                  )
+                : undefined;
             return (
               <div
                 key={tab.id}
@@ -532,8 +540,8 @@ export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
                   <Shield className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
                 )}
                 {tab.kind === "terminal" &&
-                  (tab.subtitle ? (
-                    <Server className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
+                  (tabHost || tab.subtitle ? (
+                    <DistroIcon host={tabHost} className="w-3.5 h-3.5" />
                   ) : (
                     <Terminal className="w-3.5 h-3.5 text-emerald-400" />
                   ))}
@@ -671,11 +679,7 @@ export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
                           className="w-full flex items-center justify-between gap-2 px-3 py-1.5 text-xs text-left text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition"
                         >
                           <div className="flex items-center gap-2.5 min-w-0">
-                            {h.protocol === "rdp" ? (
-                              <Monitor className="w-3.5 h-3.5 text-sky-400 shrink-0" />
-                            ) : (
-                              <Server className="w-3.5 h-3.5 text-[var(--accent-primary)] shrink-0" />
-                            )}
+                            <DistroIcon host={h} className="w-3.5 h-3.5" />
                             <span className="truncate font-medium">
                               {h.label}
                             </span>
@@ -735,45 +739,48 @@ export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
         </div>
       </div>
 
-      {/* Right: Blood Rain, Broadcast Toggle, Command Palette, Vault Lock & Window Controls */}
-      <div className="flex items-center h-full shrink-0 gap-1.5 pr-1">
+      {/* Right: Compact Utility Icons, Command Palette, Vault Lock & Window Controls */}
+      <div className="flex items-center h-full shrink-0 gap-1 pr-1">
         <button
           onClick={toggleBloodRain}
-          className={`flex items-center gap-1 h-6 px-2 rounded text-[11px] font-medium transition ${
+          className={`flex items-center justify-center w-6 h-6 rounded transition ${
             bloodRain
-              ? "bg-red-600/25 text-red-300 border border-red-500/55 shadow-[0_0_10px_rgba(239,68,68,0.3)]"
-              : "text-[var(--text-secondary)] hover:text-red-300 hover:bg-red-500/10"
+              ? "bg-red-600/25 text-red-300 border border-red-500/55 shadow-[0_0_8px_rgba(239,68,68,0.3)]"
+              : "text-[var(--text-muted)] hover:text-red-300 hover:bg-red-500/10"
           }`}
           title="Toggle Cyberdyne Blood Rain Mode"
         >
-          <Droplets className="w-3.5 h-3.5" />
-          <span className="hidden lg:inline">Blood Rain</span>
+          <Droplets className="w-3 h-3" />
         </button>
 
         <button
           onClick={toggleBroadcastMode}
-          className={`flex items-center gap-1.5 h-6 px-2.5 rounded text-[11px] font-medium transition ${
+          className={`flex items-center justify-center gap-1 h-6 ${
+            broadcastEnabled ? "px-1.5" : "w-6"
+          } rounded text-[10px] font-semibold transition ${
             broadcastEnabled
-              ? "bg-amber-500/20 text-amber-300 border border-amber-500/50 shadow-[0_0_10px_rgba(245,158,11,0.25)]"
-              : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
+              ? "bg-amber-500/20 text-amber-300 border border-amber-500/50 shadow-[0_0_8px_rgba(245,158,11,0.25)]"
+              : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
           }`}
-          title="Broadcast keystrokes simultaneously to multiple panes"
+          title={
+            broadcastEnabled
+              ? `Broadcast Active (${broadcastPaneIds.length} pane${
+                  broadcastPaneIds.length === 1 ? "" : "s"
+                }) — Click to disable`
+              : "Broadcast keystrokes simultaneously to multiple panes"
+          }
         >
-          <Radio className="w-3.5 h-3.5" />
-          <span className="hidden sm:inline">
-            {broadcastEnabled
-              ? `Broadcast (${broadcastPaneIds.length})`
-              : "Broadcast"}
-          </span>
+          <Radio className="w-3 h-3" />
+          {broadcastEnabled && <span>{broadcastPaneIds.length}</span>}
         </button>
 
         <button
           onClick={() => setCommandPaletteOpen(true)}
-          className="flex items-center gap-2 h-6 px-2.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] hover:border-[var(--border-accent)] text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition"
+          className="flex items-center gap-1.5 h-6 px-2 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] hover:border-[var(--border-accent)] text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition"
           title="Command Palette (Ctrl+Shift+P)"
         >
           <Search className="w-3 h-3" />
-          <span className="hidden md:inline">Command</span>
+          <span className="hidden 2xl:inline">Command</span>
           <kbd className="text-[10px] px-1 rounded bg-white/5 text-[var(--text-muted)]">
             Ctrl+Shift+P
           </kbd>

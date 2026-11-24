@@ -167,6 +167,21 @@ function updatePaneInTree(
   };
 }
 
+function updateHostInTree(node: SplitNode, host: HostRecord): SplitNode {
+  const paneTitle = host.label || `${host.username}@${host.address}`;
+  if (node.type === "leaf") {
+    if (node.pane.hostId === host.id) {
+      return { ...node, pane: { ...node.pane, title: paneTitle } };
+    }
+    return node;
+  }
+  return {
+    ...node,
+    first: updateHostInTree(node.first, host),
+    second: updateHostInTree(node.second, host),
+  };
+}
+
 export function collectPanes(node: SplitNode): TerminalPaneConfig[] {
   if (node.type === "leaf") return [node.pane];
   return [...collectPanes(node.first), ...collectPanes(node.second)];
@@ -254,6 +269,7 @@ interface WorkspaceState {
     paneId: string,
     patch: Partial<TerminalPaneConfig>
   ) => void;
+  syncUpdatedHostInTabs: (host: HostRecord) => void;
   toggleSftpDrawer: (tabId: string, hostId?: string) => void;
 
   /* Broadcast Input */
@@ -809,6 +825,26 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           ? { ...t, rootNode: updatePaneInTree(t.rootNode, paneId, patch) }
           : t
       ),
+    }));
+  },
+
+  syncUpdatedHostInTabs: (host) => {
+    set((state) => ({
+      tabs: state.tabs.map((t) => {
+        if (t.kind !== "terminal") return t;
+        const panes = collectPanes(t.rootNode);
+        const matchesPrimary = panes[0]?.hostId === host.id;
+        const matchesAny = panes.some((p) => p.hostId === host.id);
+        if (!matchesAny) return t;
+        return {
+          ...t,
+          title: matchesPrimary ? host.label || host.address : t.title,
+          subtitle: matchesPrimary
+            ? `${host.username}@${host.address}`
+            : t.subtitle,
+          rootNode: updateHostInTree(t.rootNode, host),
+        };
+      }),
     }));
   },
 

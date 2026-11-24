@@ -48,6 +48,11 @@ import {
   apiVaultUnlockTotp,
 } from "../lib/ipc";
 
+import {
+  clearLocalDetectedOs,
+  saveLocalDetectedOs,
+} from "../components/common/DistroIcon";
+
 export type VaultSection =
   | "hosts"
   | "keychain"
@@ -113,6 +118,8 @@ interface VaultState {
   deleteGroup: (id: string) => Promise<void>;
 
   saveHost: (h: HostRecord) => Promise<HostRecord>;
+  applyDetectedHostOs: (hostId: string, osIcon: string) => void;
+  upsertHostInMemory: (host: HostRecord) => void;
   bulkSaveHosts: (list: HostRecord[]) => Promise<void>;
   bulkDeleteHosts: (ids: string[]) => Promise<void>;
   deleteHost: (id: string) => Promise<void>;
@@ -358,9 +365,37 @@ export const useVaultStore = create<VaultState>((set, get) => ({
   },
 
   saveHost: async (h) => {
+    if (!h.osIcon) {
+      clearLocalDetectedOs(h.id);
+    } else {
+      saveLocalDetectedOs(h.id, h.osIcon);
+    }
     const saved = await apiSaveHost(h);
     await get().reloadSnapshot();
     return saved;
+  },
+  applyDetectedHostOs: (hostId, osIcon) => {
+    saveLocalDetectedOs(hostId, osIcon);
+    set((s) => ({
+      hosts: s.hosts.map((h) =>
+        h.id === hostId ? { ...h, osIcon } : h
+      ),
+    }));
+  },
+  upsertHostInMemory: (host) => {
+    if (!host.osIcon) {
+      clearLocalDetectedOs(host.id);
+    } else {
+      saveLocalDetectedOs(host.id, host.osIcon);
+    }
+    set((s) => {
+      const exists = s.hosts.some((h) => h.id === host.id);
+      return {
+        hosts: exists
+          ? s.hosts.map((h) => (h.id === host.id ? host : h))
+          : [...s.hosts, host],
+      };
+    });
   },
   bulkSaveHosts: async (list) => {
     await Promise.all(list.map((h) => apiSaveHost(h)));

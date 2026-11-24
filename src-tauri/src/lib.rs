@@ -311,16 +311,33 @@ fn vault_delete_group(id: String, state: State<'_, AppState>) -> CmdResult<()> {
 }
 
 #[tauri::command]
-fn vault_save_host(host: HostRecord, state: State<'_, AppState>) -> CmdResult<HostRecord> {
-    let guard = state.vault.lock().map_err(err_str)?;
-    guard.save_host(&host).map_err(err_str)?;
+async fn vault_save_host(
+    host: HostRecord,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> CmdResult<HostRecord> {
+    {
+        let guard = state.vault.lock().map_err(err_str)?;
+        guard.save_host(&host).map_err(err_str)?;
+    }
+    state.ssh.invalidate_host(&host.id).await;
+    let _ = app.emit("vault-host-updated", &host);
     Ok(host)
 }
 
 #[tauri::command]
-fn vault_delete_host(id: String, state: State<'_, AppState>) -> CmdResult<()> {
-    let guard = state.vault.lock().map_err(err_str)?;
-    guard.delete_host(&id).map_err(err_str)
+async fn vault_delete_host(
+    id: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> CmdResult<()> {
+    {
+        let guard = state.vault.lock().map_err(err_str)?;
+        guard.delete_host(&id).map_err(err_str)?;
+    }
+    state.ssh.invalidate_host(&id).await;
+    let _ = app.emit("vault-external-sync", ());
+    Ok(())
 }
 
 #[tauri::command]

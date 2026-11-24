@@ -1,8 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Search,
-  Server,
-  Monitor,
   Terminal,
   FolderSync,
   ArrowLeftRight,
@@ -24,6 +22,7 @@ import { useVaultStore } from "../../store/useVaultStore";
 import { APP_THEMES } from "../../lib/themes";
 import { apiTunnelStart, apiTunnelStop } from "../../lib/ipc";
 import type { ThemeId } from "../../types/models";
+import { DistroIcon } from "../common/DistroIcon";
 
 interface PaletteAction {
   id: string;
@@ -111,11 +110,7 @@ export const CommandPalette: React.FC = () => {
         category: isRdp ? "Windows RDP" : "SSH Connect",
         title: isRdp ? `Launch RDP: ${h.label}` : `Connect: ${h.label}`,
         subtitle: `${isRdp && h.rdpDomain ? `${h.rdpDomain}\\` : ""}${h.username}@${h.address}:${h.port} ${h.tags.map((t) => `#${t}`).join(" ")}`,
-        icon: isRdp ? (
-          <Monitor className="w-4 h-4 text-sky-400" />
-        ) : (
-          <Server className="w-4 h-4 text-[var(--accent-primary)]" />
-        ),
+        icon: <DistroIcon host={h} className="w-4 h-4" />,
         run: () => openHostTerminal(h),
       });
       if (!isRdp && activeTab && activeTab.kind === "terminal" && activePane) {

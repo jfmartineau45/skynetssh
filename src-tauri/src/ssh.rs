@@ -16,7 +16,8 @@ use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot, Mutex};
 
 use crate::models::{
-    HostKeyPromptEvent, HostProbeResult, HostRecord, KnownHostRecord, SshKeyRecord,
+    HostKeyPromptEvent, HostOsDetectedEvent, HostProbeResult, HostRecord, KnownHostRecord,
+    SshKeyRecord,
 };
 use crate::vault::VaultEngine;
 
@@ -183,9 +184,11 @@ enum ShellControl {
     Close,
 }
 
+type CachedSshHandle = (String, Arc<Handle<SshClientHandler>>);
+
 #[derive(Clone)]
 pub struct SshPool {
-    handles: Arc<Mutex<HashMap<String, Arc<Handle<SshClientHandler>>>>>,
+    handles: Arc<Mutex<HashMap<String, CachedSshHandle>>>,
     shells: Arc<Mutex<HashMap<String, mpsc::UnboundedSender<ShellControl>>>>,
     shell_owners: Arc<Mutex<HashMap<String, String>>>,
     pending_prompts: Arc<Mutex<HashMap<String, oneshot::Sender<bool>>>>,
@@ -295,28 +298,75 @@ impl SshPool {
         })
     }
 
+    fn compute_connection_fingerprint(
+        host_id: &str,
+        vault: &std::sync::Mutex<VaultEngine>,
+    ) -> Result<String> {
+        let guard = vault.lock().map_err(|_| anyhow!("Vault mutex poisoned"))?;
+        let mut parts = Vec::new();
+        let mut cur = Some(host_id.to_string());
+        let mut seen = HashSet::new();
+
+        while let Some(id) = cur {
+            if !seen.insert(id.clone()) || seen.len() > 8 {
+                break;
+            }
+            let h = guard.get_host(&id)?;
+            let key_fp = h
+                .key_id
+                .as_deref()
+                .and_then(|kid| guard.get_key(kid).ok())
+                .map(|k| format!("{}:{:?}", k.fingerprint, k.passphrase))
+                .unwrap_or_default();
+            parts.push(format!(
+                "{}|{}|{}|{}|{}|{:?}|{}",
+                h.id,
+                h.address.trim(),
+                h.port,
+                h.username.trim(),
+                h.auth_method,
+                h.password,
+                key_fp
+            ));
+            cur = h.jump_host_id.filter(|s| !s.is_empty());
+        }
+
+        Ok(parts.join("->"))
+    }
+
+    pub async fn invalidate_host(&self, host_id: &str) {
+        self.handles.lock().await.remove(host_id);
+    }
+
     pub async fn get_or_connect(
         &self,
         host_id: &str,
         vault: Arc<std::sync::Mutex<VaultEngine>>,
         app_handle: Option<AppHandle>,
     ) -> Result<Arc<Handle<SshClientHandler>>> {
-        if let Some(existing) = self.handles.lock().await.get(host_id).cloned() {
-            if !existing.is_closed() {
+        let desired_fp = Self::compute_connection_fingerprint(host_id, &vault)?;
+
+        if let Some((cached_fp, existing)) = self.handles.lock().await.get(host_id).cloned() {
+            if cached_fp == desired_fp && !existing.is_closed() {
                 return Ok(existing);
             }
+            // Host IP, username, port, credentials, or jump-host changed -> evict stale session!
+            self.handles.lock().await.remove(host_id);
         }
 
         let mut visited = HashSet::new();
         let handle = self
-            .connect_recursive(host_id, &mut visited, vault, app_handle, None)
+            .connect_recursive(host_id, &mut visited, vault.clone(), app_handle.clone(), None)
             .await?;
 
         let arc_handle = Arc::new(handle);
         self.handles
             .lock()
             .await
-            .insert(host_id.to_string(), arc_handle.clone());
+            .insert(host_id.to_string(), (desired_fp, arc_handle.clone()));
+
+        spawn_os_distro_probe(host_id.to_string(), arc_handle.clone(), vault, app_handle);
+
         Ok(arc_handle)
     }
 
@@ -747,7 +797,7 @@ impl SshPool {
             let _ = tx.send(ShellControl::Close);
         }
         let handles: Vec<_> = self.handles.lock().await.drain().collect();
-        for (_, h) in handles {
+        for (_, (_, h)) in handles {
             let _ = h
                 .disconnect(Disconnect::ByApplication, "Vault locked", "en")
                 .await;
@@ -929,6 +979,141 @@ pub async fn probe_host_reachability(
     }
 }
 
+/// Parses `/etc/os-release` + `uname -s` + Proxmox/Synology markers into a canonical distro icon slug.
+pub fn detect_os_slug_from_probe(raw: &str) -> Option<&'static str> {
+    let lower = raw.to_ascii_lowercase();
+    if lower.contains("skynet_pve=1") {
+        return Some("proxmox");
+    }
+    if lower.contains("skynet_synology=1") || lower.contains("synology") {
+        return Some("synology");
+    }
+
+    let mut id_val = String::new();
+    let mut id_like = String::new();
+    let mut pretty = String::new();
+
+    for line in lower.lines() {
+        let trimmed = line.trim();
+        if let Some(v) = trimmed.strip_prefix("id=") {
+            id_val = v.trim_matches(|c| c == '"' || c == '\'').to_string();
+        } else if let Some(v) = trimmed.strip_prefix("id_like=") {
+            id_like = v.trim_matches(|c| c == '"' || c == '\'').to_string();
+        } else if let Some(v) = trimmed.strip_prefix("pretty_name=") {
+            pretty = v.trim_matches(|c| c == '"' || c == '\'').to_string();
+        }
+    }
+
+    let match_token = |tok: &str| -> Option<&'static str> {
+        match tok {
+            "ubuntu" | "pop" | "linuxmint" | "elementary" | "zorin" => Some("ubuntu"),
+            "raspbian" => Some("raspberrypi"),
+            "kali" => Some("kali"),
+            "proxmox" => Some("proxmox"),
+            "debian" => Some("debian"),
+            "rocky" => Some("rocky"),
+            "almalinux" => Some("almalinux"),
+            "rhel" | "ol" => Some("rhel"),
+            "fedora" => Some("fedora"),
+            "centos" => Some("centos"),
+            "amzn" => Some("aws"),
+            "arch" | "manjaro" | "endeavouros" | "cachyos" => Some("arch"),
+            "alpine" => Some("alpine"),
+            "opensuse" | "opensuse-leap" | "opensuse-tumbleweed" | "sles" => Some("opensuse"),
+            "nixos" => Some("nixos"),
+            "freebsd" => Some("freebsd"),
+            _ => None,
+        }
+    };
+
+    if pretty.contains("raspberry pi") || pretty.contains("raspbian") {
+        return Some("raspberrypi");
+    }
+    if let Some(slug) = match_token(&id_val) {
+        return Some(slug);
+    }
+    for like_tok in id_like.split_whitespace() {
+        if let Some(slug) = match_token(like_tok) {
+            return Some(slug);
+        }
+    }
+
+    for line in lower.lines() {
+        let t = line.trim();
+        if t == "darwin" {
+            return Some("macos");
+        }
+        if t == "freebsd" || t == "openbsd" || t == "netbsd" {
+            return Some("freebsd");
+        }
+        if t.contains("windows_nt") || t.starts_with("msys") || t.starts_with("mingw") {
+            return Some("windows");
+        }
+        if t == "linux" {
+            return Some("linux");
+        }
+    }
+
+    None
+}
+
+fn spawn_os_distro_probe(
+    host_id: String,
+    handle: Arc<Handle<SshClientHandler>>,
+    vault: Arc<std::sync::Mutex<VaultEngine>>,
+    app_handle: Option<AppHandle>,
+) {
+    tokio::spawn(async move {
+        let probe_fut = async {
+            let mut ch = handle.channel_open_session().await.ok()?;
+            let cmd = "cat /etc/os-release 2>/dev/null; [ -f /usr/bin/pveversion ] && echo SKYNET_PVE=1; [ -f /etc.defaults/VERSION ] && echo SKYNET_SYNOLOGY=1; uname -s 2>/dev/null";
+            ch.exec(true, cmd).await.ok()?;
+            let mut buf = Vec::with_capacity(2048);
+            while let Some(msg) = ch.wait().await {
+                match msg {
+                    ChannelMsg::Data { ref data } => {
+                        if buf.len() < 8192 {
+                            buf.extend_from_slice(data);
+                        }
+                    }
+                    ChannelMsg::Eof | ChannelMsg::Close => break,
+                    _ => {}
+                }
+            }
+            let _ = ch.close().await;
+            String::from_utf8(buf).ok()
+        };
+
+        let Ok(Some(output)) = tokio::time::timeout(Duration::from_secs(4), probe_fut).await else {
+            return;
+        };
+        let Some(slug) = detect_os_slug_from_probe(&output) else {
+            return;
+        };
+
+        if let Ok(guard) = vault.lock() {
+            if guard.is_unlocked() && !guard.status().read_only {
+                if let Ok(mut host) = guard.get_host(&host_id) {
+                    if host.os_icon.as_deref() != Some(slug) {
+                        host.os_icon = Some(slug.to_string());
+                        let _ = guard.save_host(&host);
+                    }
+                }
+            }
+        }
+
+        if let Some(app) = app_handle {
+            let _ = app.emit(
+                "host-os-detected",
+                HostOsDetectedEvent {
+                    host_id,
+                    os_icon: slug.to_string(),
+                },
+            );
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -973,5 +1158,35 @@ mod tests {
         append_replay_bytes(&mut ring, b"0123456789ABCDEF", 10);
         let s2: Vec<u8> = ring.iter().copied().collect();
         assert_eq!(s2, b"6789ABCDEF");
+    }
+
+    #[test]
+    fn test_detect_os_slug_from_probe_distros() {
+        assert_eq!(
+            detect_os_slug_from_probe("NAME=\"Ubuntu\"\nID=ubuntu\nID_LIKE=debian\nLinux\n"),
+            Some("ubuntu")
+        );
+        assert_eq!(
+            detect_os_slug_from_probe("ID=debian\nPRETTY_NAME=\"Debian GNU/Linux 12\"\nSKYNET_PVE=1\nLinux\n"),
+            Some("proxmox")
+        );
+        assert_eq!(
+            detect_os_slug_from_probe("ID=debian\nPRETTY_NAME=\"Debian GNU/Linux 12\"\nLinux\n"),
+            Some("debian")
+        );
+        assert_eq!(
+            detect_os_slug_from_probe("ID=\"rocky\"\nID_LIKE=\"rhel centos fedora\"\nLinux\n"),
+            Some("rocky")
+        );
+        assert_eq!(
+            detect_os_slug_from_probe("ID=alpine\nLinux\n"),
+            Some("alpine")
+        );
+        assert_eq!(
+            detect_os_slug_from_probe("ID=debian\nPRETTY_NAME=\"Raspberry Pi OS GNU/Linux 12\"\nLinux\n"),
+            Some("raspberrypi")
+        );
+        assert_eq!(detect_os_slug_from_probe("Darwin\n"), Some("macos"));
+        assert_eq!(detect_os_slug_from_probe("FreeBSD\n"), Some("freebsd"));
     }
 }

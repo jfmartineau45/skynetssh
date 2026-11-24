@@ -38,10 +38,16 @@ export interface HostRecord {
   rdpWidth?: number | null;
   rdpHeight?: number | null;
   rdpIgnoreCert?: boolean | null;
+  osIcon?: string | null;
   keepaliveIntervalSecs: number;
   notes?: string | null;
   lastConnectedAt?: number | null;
   updatedAt: number;
+}
+
+export interface HostOsDetectedEvent {
+  hostId: string;
+  osIcon: string;
 }
 
 export interface RdpLaunchResult {

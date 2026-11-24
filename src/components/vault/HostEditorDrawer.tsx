@@ -20,6 +20,7 @@ import type {
 import { useVaultStore } from "../../store/useVaultStore";
 import { useWorkspaceStore } from "../../store/useWorkspaceStore";
 import { parseSshConnectionString } from "../../lib/sshParser";
+import { DISTRO_OPTIONS, DistroIcon } from "../common/DistroIcon";
 
 export { parseSshConnectionString };
 
@@ -48,7 +49,7 @@ export const HostEditorDrawer: React.FC<Props> = ({
     generateKey,
     importKeyFile,
   } = useVaultStore();
-  const { openHostTerminal } = useWorkspaceStore();
+  const { openHostTerminal, syncUpdatedHostInTabs } = useWorkspaceStore();
 
   const [protocol, setProtocol] = useState<HostProtocol>("ssh");
   const [label, setLabel] = useState("");
@@ -60,6 +61,7 @@ export const HostEditorDrawer: React.FC<Props> = ({
   const [keyId, setKeyId] = useState<string>("");
   const [groupId, setGroupId] = useState<string>("");
   const [tagsText, setTagsText] = useState("");
+  const [osIcon, setOsIcon] = useState<string>("");
   const [jumpHostId, setJumpHostId] = useState<string>("");
   const [startupSnippetId, setStartupSnippetId] = useState<string>("");
   const [startupCommand, setStartupCommand] = useState("");
@@ -89,6 +91,7 @@ export const HostEditorDrawer: React.FC<Props> = ({
       setKeyId(host.keyId ?? keys[0]?.id ?? "");
       setGroupId(host.groupId ?? "");
       setTagsText(host.tags.join(", "));
+      setOsIcon(host.osIcon ?? "");
       setJumpHostId(host.jumpHostId ?? "");
       setStartupSnippetId(host.startupSnippetId ?? "");
       setStartupCommand(host.startupCommand ?? "");
@@ -110,6 +113,7 @@ export const HostEditorDrawer: React.FC<Props> = ({
       setKeyId(keys[0]?.id ?? "");
       setGroupId(defaultGroupId ?? "");
       setTagsText(p === "rdp" ? "windows, rdp" : "");
+      setOsIcon("");
       setJumpHostId("");
       setStartupSnippetId("");
       setStartupCommand("");
@@ -139,6 +143,7 @@ export const HostEditorDrawer: React.FC<Props> = ({
   };
 
   const handleAddressPasteOrChange = (val: string) => {
+    const labelMatchedOldAddress = Boolean(address) && label.trim() === address.trim();
     if (
       /^(?:ssh|rdp|mstsc)/i.test(val) ||
       val.includes("@") ||
@@ -151,11 +156,14 @@ export const HostEditorDrawer: React.FC<Props> = ({
         if (parsed.domain) setRdpDomain(parsed.domain);
         if (parsed.username) setUsername(parsed.username);
         if (parsed.port) setPort(parsed.port);
-        if (!label) setLabel(parsed.address);
+        if (!label || labelMatchedOldAddress) setLabel(parsed.address);
         return;
       }
     }
     setAddress(val);
+    if (labelMatchedOldAddress) {
+      setLabel(val);
+    }
   };
 
   const handleCreateGroupInline = async () => {
@@ -214,6 +222,12 @@ export const HostEditorDrawer: React.FC<Props> = ({
     }
     const defaultPort = isRdp ? 3389 : 22;
     const effectiveAuth: AuthMethod = isRdp ? "password" : authMethod;
+    const addressChanged = Boolean(host && address.trim() !== host.address.trim());
+    const resolvedOsIcon = isRdp
+      ? "windows"
+      : addressChanged && osIcon === (host?.osIcon ?? "")
+      ? null
+      : osIcon || null;
     const record: HostRecord = {
       id: host?.id ?? crypto.randomUUID(),
       label: label.trim() || address.trim(),
@@ -237,6 +251,7 @@ export const HostEditorDrawer: React.FC<Props> = ({
       rdpWidth: isRdp ? host?.rdpWidth ?? 1600 : null,
       rdpHeight: isRdp ? host?.rdpHeight ?? 960 : null,
       rdpIgnoreCert: isRdp ? rdpIgnoreCert : null,
+      osIcon: resolvedOsIcon,
       keepaliveIntervalSecs: 30,
       notes: notes.trim() || null,
       lastConnectedAt: host?.lastConnectedAt ?? null,
@@ -244,6 +259,7 @@ export const HostEditorDrawer: React.FC<Props> = ({
     };
     try {
       const saved = await saveHost(record);
+      syncUpdatedHostInTabs(saved);
       onClose();
       if (andConnect) {
         openHostTerminal(saved);
@@ -265,11 +281,29 @@ export const HostEditorDrawer: React.FC<Props> = ({
                 : "bg-[var(--accent-glow)] text-[var(--accent-primary)]"
             }`}
           >
-            {isRdp ? (
-              <Monitor className="w-4 h-4" />
-            ) : (
-              <Server className="w-4 h-4" />
-            )}
+            <DistroIcon
+              os={isRdp ? "windows" : osIcon || undefined}
+              host={
+                host
+                  ? {
+                      id: host.id,
+                      protocol,
+                      osIcon: osIcon || host.osIcon,
+                      label,
+                      username,
+                      tags: tagsText.split(",").map((t) => t.trim()),
+                    }
+                  : {
+                      id: "preview",
+                      protocol,
+                      osIcon: osIcon || null,
+                      label,
+                      username,
+                      tags: tagsText.split(",").map((t) => t.trim()),
+                    }
+              }
+              className="w-4 h-4"
+            />
           </div>
           <div>
             <h3 className="text-sm font-bold text-[var(--text-primary)]">
@@ -401,6 +435,41 @@ export const HostEditorDrawer: React.FC<Props> = ({
               />
             </div>
           </div>
+
+          {!isRdp && (
+            <div>
+              <label className="block text-xs text-[var(--text-secondary)] mb-1">
+                Distro / OS Logo
+              </label>
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-lg bg-black/40 border border-[var(--border-subtle)]">
+                  <DistroIcon
+                    os={osIcon || undefined}
+                    host={{
+                      id: host?.id ?? "preview",
+                      protocol,
+                      osIcon: osIcon || host?.osIcon,
+                      label,
+                      username,
+                      tags: tagsText.split(",").map((t) => t.trim()),
+                    }}
+                    className="w-4 h-4"
+                  />
+                </div>
+                <select
+                  value={osIcon}
+                  onChange={(e) => setOsIcon(e.target.value)}
+                  className="flex-1 px-2.5 py-2 rounded-lg bg-black/40 border border-[var(--border-subtle)] text-xs text-white focus:outline-none"
+                >
+                  {DISTRO_OPTIONS.map((opt) => (
+                    <option key={opt.slug || "auto"} value={opt.slug}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
 
           {inlineNewGroup && (
             <div className="flex items-center gap-1.5 pt-1">

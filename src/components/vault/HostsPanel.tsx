@@ -34,6 +34,7 @@ import {
   HostEditorDrawer,
   parseSshConnectionString,
 } from "./HostEditorDrawer";
+import { DistroIcon } from "../common/DistroIcon";
 import {
   apiImportSshConfig,
   apiLaunchRdp,
@@ -1206,11 +1207,10 @@ export const HostsPanel: React.FC = () => {
 
                                 <td className="px-3 py-2 font-semibold text-[var(--text-primary)]">
                                   <div className="flex items-center gap-2">
-                                    {isRdp ? (
-                                      <Monitor className="w-3.5 h-3.5 text-sky-400 shrink-0" />
-                                    ) : (
-                                      <Server className="w-3.5 h-3.5 text-[var(--accent-primary)] shrink-0" />
-                                    )}
+                                    <DistroIcon
+                                      host={h}
+                                      className="w-4 h-4"
+                                    />
                                     <span className="truncate max-w-[200px]">
                                       {h.label}
                                     </span>
@@ -1396,14 +1396,13 @@ export const HostsPanel: React.FC = () => {
                                     className={`p-2 rounded-lg shrink-0 border ${
                                       isRdp
                                         ? "bg-sky-500/15 border-sky-400/45 text-sky-400"
-                                        : "bg-[var(--accent-glow)] border-[var(--border-accent)] text-[var(--accent-primary)]"
+                                        : "bg-white/[0.04] border-[var(--border-subtle)] text-[var(--accent-primary)]"
                                     }`}
                                   >
-                                    {isRdp ? (
-                                      <Monitor className="w-4 h-4" />
-                                    ) : (
-                                      <Server className="w-4 h-4" />
-                                    )}
+                                    <DistroIcon
+                                      host={h}
+                                      className="w-4 h-4"
+                                    />
                                   </div>
                                   <div className="min-w-0">
                                     <div className="flex items-center gap-1.5">

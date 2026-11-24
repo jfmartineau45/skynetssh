@@ -18,7 +18,12 @@ import {
   apiMarkStandbyReady,
   isTauriRuntime,
 } from "./lib/ipc";
-import type { HostKeyPromptEvent, ShellProfile } from "./types/models";
+import type {
+  HostKeyPromptEvent,
+  HostOsDetectedEvent,
+  HostRecord,
+  ShellProfile,
+} from "./types/models";
 
 const VaultDashboard = lazy(() =>
   import("./components/vault/VaultDashboard").then((m) => ({
@@ -97,6 +102,7 @@ export const App: React.FC = () => {
     receiveDockedTabsFromPopout,
     popoutTabToWindow,
     dockPopoutToMain,
+    syncUpdatedHostInTabs,
     adjustFontSize,
   } = useWorkspaceStore();
 
@@ -136,6 +142,8 @@ export const App: React.FC = () => {
     refreshStatus,
     reloadSnapshot,
     enqueueHostKeyPrompt,
+    applyDetectedHostOs,
+    upsertHostInMemory,
     setActiveSection,
     setNewHostDrawerRequested,
   } = useVaultStore();
@@ -214,6 +222,21 @@ export const App: React.FC = () => {
       }
     );
 
+    const unlistenHostOs = listen<HostOsDetectedEvent>(
+      "host-os-detected",
+      (ev) => {
+        applyDetectedHostOs(ev.payload.hostId, ev.payload.osIcon);
+      }
+    );
+
+    const unlistenHostUpdated = listen<HostRecord>(
+      "vault-host-updated",
+      (ev) => {
+        upsertHostInMemory(ev.payload);
+        syncUpdatedHostInTabs(ev.payload);
+      }
+    );
+
     // Auto-reload when OneDrive / SharePoint / Syncthing syncs a teammate's Vault change!
     const unlistenExternalSync = listen("vault-external-sync", () => {
       if (useVaultStore.getState().status?.unlocked) {
@@ -227,6 +250,8 @@ export const App: React.FC = () => {
       unlistenActivate.then((u) => u());
       unlistenDockBack.then((u) => u());
       unlistenHostKey.then((u) => u());
+      unlistenHostOs.then((u) => u());
+      unlistenHostUpdated.then((u) => u());
       unlistenExternalSync.then((u) => u());
     };
   }, [
@@ -234,6 +259,9 @@ export const App: React.FC = () => {
     reloadSnapshot,
     setShells,
     enqueueHostKeyPrompt,
+    applyDetectedHostOs,
+    upsertHostInMemory,
+    syncUpdatedHostInTabs,
     initPopoutWorkspace,
     receiveDockedTabsFromPopout,
     initialPopoutParams,

@@ -18,6 +18,8 @@ pub struct HostRecord {
     pub label: String,
     #[serde(default = "default_protocol")]
     pub protocol: String, // "ssh" | "rdp"
+    #[serde(default)]
+    pub os_icon: Option<String>, // "ubuntu" | "debian" | "proxmox" | "alpine" | "arch" | "rocky" | "rhel" | "fedora" | "windows" | ...
     pub address: String,
     pub port: u16,
     pub username: String,
@@ -52,6 +54,13 @@ fn default_protocol() -> String {
 
 fn default_keepalive() -> u64 {
     30
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostOsDetectedEvent {
+    pub host_id: String,
+    pub os_icon: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
