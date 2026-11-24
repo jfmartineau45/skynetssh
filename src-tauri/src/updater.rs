@@ -280,50 +280,14 @@ pub async fn download_and_install_update(
     std::fs::write(&installer_path, &bytes)
         .context("Failed to write downloaded installer to disk")?;
 
-    let current_exe = std::env::current_exe()
-        .ok()
-        .unwrap_or_else(|| {
-            dirs::data_local_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join("SkynetSSH")
-                .join("skynet-ssh.exe")
-        });
-    let current_pid = std::process::id();
-
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        const DETACHED_PROCESS: u32 = 0x0000_0008;
-
-        let ps_script = concat!(
-            "$pidToWait = [int]$env:SKYNET_UPDATER_PID; ",
-            "for ($i = 0; $i -lt 40; $i++) { ",
-            "  if (-not (Get-Process -Id $pidToWait -ErrorAction SilentlyContinue)) { break } ",
-            "  Start-Sleep -Milliseconds 350 ",
-            "} ",
-            "Start-Process -FilePath $env:SKYNET_UPDATER_SETUP -ArgumentList '/S' -Wait; ",
-            "if (Test-Path -LiteralPath $env:SKYNET_UPDATER_APP) { ",
-            "  Start-Process -FilePath $env:SKYNET_UPDATER_APP ",
-            "}"
-        );
-
-        std::process::Command::new("powershell.exe")
-            .args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-WindowStyle",
-                "Hidden",
-                "-Command",
-                ps_script,
-            ])
-            .env("SKYNET_UPDATER_PID", current_pid.to_string())
-            .env("SKYNET_UPDATER_SETUP", &installer_path)
-            .env("SKYNET_UPDATER_APP", &current_exe)
-            .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS)
-            .spawn()
-            .map_err(|e| anyhow!("Failed to launch update installer helper: {e}"))?;
-    }
+    // Invoke Tauri's native NSIS updater directly (GUI subsystem, zero shell wrapper needed):
+    //   /S      -> silent mode (skips dialog pages & interactive WiX MsiExec prompts)
+    //   /UPDATE -> skips WebView2 bootstrapper & preserves pinned shortcuts
+    //   /R      -> automatically relaunches $INSTDIR\skynet-ssh.exe via RunAsUser on completion
+    std::process::Command::new(&installer_path)
+        .args(["/S", "/UPDATE", "/R"])
+        .spawn()
+        .map_err(|e| anyhow!("Failed to launch NSIS update installer: {e}"))?;
 
     app.exit(0);
     Ok(())

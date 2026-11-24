@@ -1,6 +1,6 @@
 [package]
 name = "skynet-ssh"
-version = "1.0.1"
+version = "1.0.2"
 description = "SkynetSSH — Native Tauri v2 SSH, RDP, SFTP, Tunnel & Multi-Pane Terminal Client"
 authors = ["jfmartineau45"]
 license = "MIT"

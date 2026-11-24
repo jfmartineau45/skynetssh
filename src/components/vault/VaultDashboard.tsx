@@ -155,7 +155,7 @@ export const VaultDashboard: React.FC = () => {
             <span>
               {status?.readOnly ? "MEMBER · READ-ONLY" : "ADMIN · R/W"}
             </span>
-            <span>v1.0.1 · XChaCha20</span>
+            <span>v1.0.2 · XChaCha20</span>
           </div>
         </div>
       </aside>
