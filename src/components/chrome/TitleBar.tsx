@@ -291,9 +291,30 @@ export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
     setNewHostDrawerRequested(true);
   };
 
+  const handleHeaderMouseDown = (e: React.MouseEvent<HTMLElement>) => {
+    if (e.button !== 0 || !isTauriRuntime()) return;
+    const target = e.target as HTMLElement | null;
+    if (!target) return;
+    // Tauri's native drag.js already handles elements with data-tauri-drag-region directly on e.target
+    if (target.hasAttribute("data-tauri-drag-region")) return;
+    if (
+      target.closest(
+        "button, input, select, textarea, a, [data-skynet-tab-id], [data-no-window-drag]"
+      )
+    ) {
+      return;
+    }
+    if (e.detail === 2) {
+      void getCurrentWindow().toggleMaximize();
+    } else {
+      void getCurrentWindow().startDragging();
+    }
+  };
+
   return (
     <header
       data-tauri-drag-region
+      onMouseDown={handleHeaderMouseDown}
       className="h-10 flex items-center justify-between border-b border-[var(--border-subtle)] bg-[var(--bg-panel)] select-none shrink-0 z-30"
     >
       {/* Left: Brand + Active Vault (Personal vs Team) Pill + Tab Bar */}
@@ -327,13 +348,17 @@ export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
             data-tauri-drag-region
             className="text-xs font-bold tracking-[0.18em] uppercase text-[var(--text-primary)]"
           >
-            SKYNET<span className="text-[var(--accent-primary)]">//</span>SSH
+            SKYNET<span data-tauri-drag-region className="text-[var(--accent-primary)]">//</span>SSH
           </span>
         </div>
 
         {/* High-Visibility Personal vs Team Vault Indicator & Switcher */}
         {!isPopout && (
-        <div className="px-1.5 border-r border-[var(--border-subtle)] h-full flex items-center shrink-0" ref={vaultMenuRef}>
+        <div
+          data-tauri-drag-region
+          className="px-1.5 border-r border-[var(--border-subtle)] h-full flex items-center shrink-0"
+          ref={vaultMenuRef}
+        >
           <button
             ref={vaultBtnRef}
             onClick={() => {
@@ -365,6 +390,7 @@ export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
 
           {vaultMenuOpen && (
             <div
+              data-no-window-drag
               style={{ top: vaultMenuPos.top, left: vaultMenuPos.left }}
               className="fixed w-80 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-accent)] shadow-2xl p-2 z-50 text-xs"
             >
@@ -490,8 +516,11 @@ export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
         </div>
         )}
 
-        {/* Workspace Tabs */}
-        <div className="flex-1 min-w-0 flex items-center h-full px-1.5 gap-1 overflow-x-auto no-scrollbar">
+        {/* Workspace Tabs — carries data-tauri-drag-region so all empty TitleBar space drags/maximizes natively! */}
+        <div
+          data-tauri-drag-region
+          className="flex-1 min-w-0 flex items-center h-full px-1.5 gap-1 overflow-x-auto no-scrollbar"
+        >
           {tabs.map((tab) => {
             const isActive = tab.id === activeTabId;
             const isDraggingThis = draggingTabId === tab.id;
@@ -617,6 +646,7 @@ export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
 
             {shellMenuOpen && (
               <div
+                data-no-window-drag
                 style={{ top: menuPos.top, left: menuPos.left }}
                 className="fixed w-72 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-accent)] shadow-2xl py-2 z-50"
               >
@@ -742,7 +772,10 @@ export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
       </div>
 
       {/* Right: Compact Utility Icons, Command Palette, Vault Lock & Window Controls */}
-      <div className="flex items-center h-full shrink-0 gap-1 pr-1">
+      <div
+        data-tauri-drag-region
+        className="flex items-center h-full shrink-0 gap-1 pr-1"
+      >
         {!isPopout && updateInfo?.updateAvailable && (
           <button
             onClick={() => {
@@ -890,6 +923,7 @@ export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
         return (
           <div
             ref={tabCtxRef}
+            data-no-window-drag
             style={{ top: tabCtxMenu.top, left: tabCtxMenu.left }}
             className="fixed w-56 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-accent)] shadow-2xl py-1.5 z-50 text-xs"
           >

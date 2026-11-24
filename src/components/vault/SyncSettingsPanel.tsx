@@ -291,7 +291,7 @@ export const SyncSettingsPanel: React.FC = () => {
                   Software Updates & GitHub Releases
                 </h3>
                 <span className="px-2 py-0.5 rounded-full bg-white/5 border border-[var(--border-subtle)] text-[10px] font-mono text-[var(--text-secondary)]">
-                  v{updateInfo?.currentVersion ?? "1.0.0"}
+                  v{updateInfo?.currentVersion ?? "1.0.1"}
                 </span>
                 {updateInfo && (
                   <span
