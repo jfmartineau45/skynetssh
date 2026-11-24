@@ -22,6 +22,7 @@ import {
   Rows2,
   Pin,
   Droplets,
+  ArrowUpCircle,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -54,6 +55,7 @@ export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
     bloodRain,
     toggleBloodRain,
     setSkynetTakeoverActive,
+    updateInfo,
   } = useWorkspaceStore();
 
   const {
@@ -741,6 +743,20 @@ export const TitleBar: React.FC<{ isPopout?: boolean }> = ({
 
       {/* Right: Compact Utility Icons, Command Palette, Vault Lock & Window Controls */}
       <div className="flex items-center h-full shrink-0 gap-1 pr-1">
+        {!isPopout && updateInfo?.updateAvailable && (
+          <button
+            onClick={() => {
+              setActiveSection("sync");
+              setActiveTab("vault");
+            }}
+            className="flex items-center gap-1 h-6 px-2 rounded bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-400/50 text-[10px] font-bold transition"
+            title={`SkynetSSH v${updateInfo.latestVersion} is available — Click to view & install in 1 click`}
+          >
+            <ArrowUpCircle className="w-3 h-3 shrink-0" />
+            <span>v{updateInfo.latestVersion}</span>
+          </button>
+        )}
+
         <button
           onClick={toggleBloodRain}
           className={`flex items-center justify-center w-6 h-6 rounded transition ${

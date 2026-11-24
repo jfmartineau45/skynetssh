@@ -1,8 +1,10 @@
 [package]
 name = "skynet-ssh"
-version = "0.3.1"
-description = "SkynetSSH — Native Tauri v2 SSH, SFTP, Tunnel & Multi-Pane Terminal Client"
-authors = ["SkynetSSH"]
+version = "1.0.0"
+description = "SkynetSSH — Native Tauri v2 SSH, RDP, SFTP, Tunnel & Multi-Pane Terminal Client"
+authors = ["jfmartineau45"]
+license = "MIT"
+repository = "https://github.com/jfmartineau45/skynetssh"
 edition = "2021"
 
 [lib]
@@ -47,3 +49,7 @@ portable-pty = "0.8"
 russh = { version = "0.49", features = ["flate2"] }
 russh-sftp = "2.0"
 ssh-key = { version = "0.6", features = ["ed25519", "rsa", "p256", "p384", "encryption", "rand_core"] }
+
+# GitHub Release Update Checker & SHA-256 Verifier (Pure Rust TLS)
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+sha2 = "0.10"

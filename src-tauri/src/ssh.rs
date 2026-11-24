@@ -816,12 +816,15 @@ pub fn is_safe_probe_host(addr: &str) -> bool {
 }
 
 pub fn requires_multi_ping_warmup(address: &str, label: &str, group_name: Option<&str>) -> bool {
-    address.trim().starts_with("198.")
-        || label.to_ascii_lowercase().contains("secorall")
-        || group_name
-            .unwrap_or("")
-            .to_ascii_lowercase()
-            .contains("secorall")
+    let addr = address.trim();
+    let lower_label = label.to_ascii_lowercase();
+    let lower_group = group_name.unwrap_or("").to_ascii_lowercase();
+    addr.starts_with("198.")
+        || addr.starts_with("100.")
+        || lower_label.contains("vpn")
+        || lower_label.contains("tunnel")
+        || lower_group.contains("vpn")
+        || lower_group.contains("wan")
 }
 
 async fn tcp_port_probe(address: &str, port: u16, timeout_ms: u64) -> Option<u64> {
@@ -924,7 +927,7 @@ pub async fn probe_host_reachability(
     let multi_ping = requires_multi_ping_warmup(&clean_addr, &label, group_name.as_deref());
 
     if multi_ping {
-        // Secorall / 198.xx VPN & tunnel targets: run 3 sequential probes so cold routes/ARP wake up
+        // 198.xx / CGNAT / VPN & WAN tunnel targets: run 3 sequential probes so cold routes/ARP wake up
         // on ping 1-2 and confirm reachability across 3 probes.
         let mut passed = 0u8;
         let mut last_ms: Option<u64> = None;
@@ -1136,15 +1139,15 @@ mod tests {
     }
 
     #[test]
-    fn test_probe_validation_and_secorall_198_detection() {
+    fn test_probe_validation_and_vpn_warmup_detection() {
         assert!(is_safe_probe_host("198.51.100.42"));
         assert!(is_safe_probe_host("2001:db8::1"));
         assert!(!is_safe_probe_host("-t 198.51.100.1"));
         assert!(!is_safe_probe_host("bad host;rm"));
 
         assert!(requires_multi_ping_warmup("198.18.0.15", "App VM", None));
-        assert!(requires_multi_ping_warmup("10.20.1.5", "Prod DB", Some("Client - Secorall")));
-        assert!(!requires_multi_ping_warmup("192.168.45.205", "Paperless", Some("Homelab")));
+        assert!(requires_multi_ping_warmup("10.20.1.5", "Prod DB", Some("Client WAN VPN")));
+        assert!(!requires_multi_ping_warmup("192.168.1.50", "Docs VM", Some("Homelab")));
     }
 
     #[test]

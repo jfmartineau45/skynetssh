@@ -65,6 +65,21 @@ pub struct HostOsDetectedEvent {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AppUpdateInfo {
+    pub current_version: String,
+    pub latest_version: String,
+    pub update_available: bool,
+    pub release_url: String,
+    pub download_url: Option<String>,
+    pub sha256_url: Option<String>,
+    pub asset_name: Option<String>,
+    pub asset_size: Option<u64>,
+    pub release_notes: Option<String>,
+    pub published_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RdpLaunchResult {
     pub host_id: String,
     pub tunneled: bool,

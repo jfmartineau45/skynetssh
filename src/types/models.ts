@@ -50,6 +50,19 @@ export interface HostOsDetectedEvent {
   osIcon: string;
 }
 
+export interface AppUpdateInfo {
+  currentVersion: string;
+  latestVersion: string;
+  updateAvailable: boolean;
+  releaseUrl: string;
+  downloadUrl?: string | null;
+  sha256Url?: string | null;
+  assetName?: string | null;
+  assetSize?: number | null;
+  releaseNotes?: string | null;
+  publishedAt?: string | null;
+}
+
 export interface RdpLaunchResult {
   hostId: string;
   tunneled: boolean;

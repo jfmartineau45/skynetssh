@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type {
+  AppUpdateInfo,
   HostRecord,
   ShellProfile,
   SnippetRecord,
@@ -10,7 +11,9 @@ import type {
   WorkspaceTab,
 } from "../types/models";
 import {
+  apiCheckAppUpdate,
   apiDockPopoutBackToMain,
+  apiInstallAppUpdate,
   apiLaunchRdp,
   apiPopoutTerminalWindow,
   apiPtyWrite,
@@ -300,6 +303,16 @@ interface WorkspaceState {
   transfers: TransferProgressEvent[];
   upsertTransfer: (ev: TransferProgressEvent) => void;
   clearCompletedTransfers: () => void;
+
+  /* GitHub Releases Auto-Update Detection & 1-Click Installer */
+  autoCheckUpdates: boolean;
+  setAutoCheckUpdates: (val: boolean) => void;
+  updateInfo: AppUpdateInfo | null;
+  checkingUpdate: boolean;
+  installingUpdate: boolean;
+  updateError: string | null;
+  checkForUpdates: (silent?: boolean) => Promise<AppUpdateInfo | null>;
+  installAvailableUpdate: () => Promise<void>;
 }
 
 const initialTheme =
@@ -952,5 +965,47 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         (t) => t.status === "running" || t.status === "queued"
       ),
     }));
+  },
+
+  autoCheckUpdates:
+    localStorage.getItem("skynet_auto_check_updates") !== "false",
+  setAutoCheckUpdates: (autoCheckUpdates) => {
+    localStorage.setItem("skynet_auto_check_updates", String(autoCheckUpdates));
+    set({ autoCheckUpdates });
+  },
+  updateInfo: null,
+  checkingUpdate: false,
+  installingUpdate: false,
+  updateError: null,
+  checkForUpdates: async (silent = false) => {
+    if (!isTauriRuntime()) return null;
+    set({ checkingUpdate: true, ...(silent ? {} : { updateError: null }) });
+    try {
+      const info = await apiCheckAppUpdate();
+      set({ updateInfo: info, checkingUpdate: false, updateError: null });
+      return info;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      set({
+        checkingUpdate: false,
+        ...(silent ? {} : { updateError: msg }),
+      });
+      return null;
+    }
+  },
+  installAvailableUpdate: async () => {
+    const info = get().updateInfo;
+    if (!info?.updateAvailable || !info.downloadUrl || !info.assetName) return;
+    set({ installingUpdate: true, updateError: null });
+    try {
+      await apiInstallAppUpdate({
+        downloadUrl: info.downloadUrl,
+        assetName: info.assetName,
+        sha256Url: info.sha256Url ?? null,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      set({ installingUpdate: false, updateError: msg });
+    }
   },
 }));

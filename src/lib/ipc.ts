@@ -1,6 +1,7 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
 import type {
   ActiveTunnelRuntime,
+  AppUpdateInfo,
   GitSyncStatus,
   GroupRecord,
   HostProbeResult,
@@ -349,3 +350,16 @@ export const apiDockPopoutBackToMain = (params: {
   tabsJson: string;
   closeWindow: boolean;
 }) => invoke<void>("window_dock_back_to_main", params);
+
+/* ─── GitHub Releases Auto-Update Detection & 1-Click Installer ─── */
+export const apiCheckAppUpdate = () =>
+  invoke<AppUpdateInfo>("app_check_update");
+
+export const apiInstallAppUpdate = (params: {
+  downloadUrl: string;
+  assetName: string;
+  sha256Url?: string | null;
+}) => invoke<void>("app_install_update", params);
+
+export const apiOpenExternalUrl = (url: string) =>
+  invoke<void>("app_open_external_url", { url });

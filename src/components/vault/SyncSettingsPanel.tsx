@@ -14,6 +14,8 @@ import {
   Smartphone,
   ShieldCheck,
   Copy,
+  ArrowUpCircle,
+  ExternalLink,
 } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useVaultStore } from "../../store/useVaultStore";
@@ -24,6 +26,7 @@ import {
   apiGitInitRemote,
   apiGitSyncNow,
   apiImportTermiusJson,
+  apiOpenExternalUrl,
   apiVaultSetPath,
 } from "../../lib/ipc";
 
@@ -91,6 +94,14 @@ export const SyncSettingsPanel: React.FC = () => {
     setIdleEasterEggEnabled,
     terminalFontSize,
     adjustFontSize,
+    autoCheckUpdates,
+    setAutoCheckUpdates,
+    updateInfo,
+    checkingUpdate,
+    installingUpdate,
+    updateError,
+    checkForUpdates,
+    installAvailableUpdate,
   } = useWorkspaceStore();
 
   const [remoteUrl, setRemoteUrl] = useState("");
@@ -268,6 +279,134 @@ export const SyncSettingsPanel: React.FC = () => {
           {message}
         </div>
       )}
+
+      {/* Section 0: Software Updates & GitHub Releases */}
+      <section className="p-5 rounded-2xl bg-[var(--bg-panel)] border border-[var(--border-subtle)] space-y-3.5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <ArrowUpCircle className="w-4 h-4 text-emerald-400" />
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-bold">
+                  Software Updates & GitHub Releases
+                </h3>
+                <span className="px-2 py-0.5 rounded-full bg-white/5 border border-[var(--border-subtle)] text-[10px] font-mono text-[var(--text-secondary)]">
+                  v{updateInfo?.currentVersion ?? "1.0.0"}
+                </span>
+                {updateInfo && (
+                  <span
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                      updateInfo.updateAvailable
+                        ? "bg-emerald-500/20 text-emerald-300 border border-emerald-400/40"
+                        : "bg-white/5 text-[var(--text-muted)]"
+                    }`}
+                  >
+                    {updateInfo.updateAvailable
+                      ? `Update v${updateInfo.latestVersion} Available`
+                      : "Up to date"}
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-[var(--text-secondary)]">
+                Checks <code>github.com/jfmartineau45/skynetssh/releases</code>{" "}
+                and verifies SHA-256 checksums before applying updates
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={checkingUpdate || installingUpdate}
+              onClick={async () => {
+                const info = await checkForUpdates(false);
+                if (info && !info.updateAvailable) {
+                  setMessage(
+                    `SkynetSSH v${info.currentVersion} is already the latest release.`
+                  );
+                }
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-[var(--border-subtle)] text-xs font-medium text-[var(--text-primary)] transition disabled:opacity-50"
+            >
+              <RefreshCw
+                className={`w-3.5 h-3.5 ${checkingUpdate ? "animate-spin" : ""}`}
+              />
+              <span>{checkingUpdate ? "Checking..." : "Check for Updates"}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() =>
+                void apiOpenExternalUrl(
+                  updateInfo?.releaseUrl ||
+                    "https://github.com/jfmartineau45/skynetssh/releases"
+                )
+              }
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-[var(--border-subtle)] text-xs text-[var(--text-secondary)] hover:text-white transition"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+              <span>GitHub Releases</span>
+            </button>
+          </div>
+        </div>
+
+        {updateError && (
+          <div className="p-2.5 rounded-lg bg-red-950/60 border border-red-500/40 text-xs text-red-200">
+            Update check error: {updateError}
+          </div>
+        )}
+
+        {updateInfo?.updateAvailable && (
+          <div className="p-3.5 rounded-xl bg-emerald-950/35 border border-emerald-400/40 space-y-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-xs font-bold text-emerald-200">
+                SkynetSSH v{updateInfo.latestVersion} is ready to install
+                {updateInfo.assetSize
+                  ? ` (${(updateInfo.assetSize / (1024 * 1024)).toFixed(1)} MB)`
+                  : ""}
+              </div>
+              {updateInfo.downloadUrl ? (
+                <button
+                  type="button"
+                  disabled={installingUpdate}
+                  onClick={() => void installAvailableUpdate()}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white shadow transition disabled:opacity-60"
+                >
+                  <ArrowUpCircle className="w-3.5 h-3.5" />
+                  <span>
+                    {installingUpdate
+                      ? "Downloading & Verifying..."
+                      : `Install v${updateInfo.latestVersion} & Restart`}
+                  </span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void apiOpenExternalUrl(updateInfo.releaseUrl)}
+                  className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white"
+                >
+                  Download from GitHub
+                </button>
+              )}
+            </div>
+            {updateInfo.releaseNotes && (
+              <pre className="max-h-36 overflow-y-auto p-2.5 rounded-lg bg-black/40 text-[11px] text-[var(--text-secondary)] whitespace-pre-wrap font-sans">
+                {updateInfo.releaseNotes}
+              </pre>
+            )}
+          </div>
+        )}
+
+        <label className="flex items-center justify-between gap-3 pt-1 text-xs text-[var(--text-secondary)] cursor-pointer">
+          <span>Automatically check GitHub Releases for updates on startup</span>
+          <input
+            type="checkbox"
+            checked={autoCheckUpdates}
+            onChange={(e) => setAutoCheckUpdates(e.target.checked)}
+            className="accent-emerald-500"
+          />
+        </label>
+      </section>
 
       {/* Section 1: Personal & Team Vaults (OneDrive / SharePoint Conflict-Free Sync) */}
       <section className="p-5 rounded-2xl bg-[var(--bg-panel)] border border-[var(--border-subtle)] space-y-4">

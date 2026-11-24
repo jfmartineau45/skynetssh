@@ -103,6 +103,7 @@ export const App: React.FC = () => {
     popoutTabToWindow,
     dockPopoutToMain,
     syncUpdatedHostInTabs,
+    checkForUpdates,
     adjustFontSize,
   } = useWorkspaceStore();
 
@@ -170,6 +171,13 @@ export const App: React.FC = () => {
           setShells(discovered);
         })
         .catch(() => {});
+    }
+
+    let updateCheckTimer: ReturnType<typeof setTimeout> | null = null;
+    if (!isStandbyBoot && !isPopout && useWorkspaceStore.getState().autoCheckUpdates) {
+      updateCheckTimer = setTimeout(() => {
+        void checkForUpdates(true);
+      }, 3500);
     }
 
     const currentLabel = getCurrentWindow().label;
@@ -247,6 +255,7 @@ export const App: React.FC = () => {
     });
 
     return () => {
+      if (updateCheckTimer) clearTimeout(updateCheckTimer);
       unlistenActivate.then((u) => u());
       unlistenDockBack.then((u) => u());
       unlistenHostKey.then((u) => u());

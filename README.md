@@ -1,78 +1,95 @@
-# SkynetSSH (`SKYNET//SSH`)
+# SkynetSSH (`SKYNET//SSH`) — v1.0
 
-> **Tabby's** sleek Acrylic split-pane terminal feel + **Termius's** effortless Host Vault, SFTP, Tunnels, and Snippets — built natively on **Tauri v2 + Rust** with **$0/month** end-to-end encrypted Git & folder sync.
+> **Tabby's** ultra-fast split-pane & tear-off multi-window terminal feel + **Termius's** visual Host Vault, automatic Linux Distro logos, Native Windows RDP, Dual-Pane SFTP, Port Forwarding, and Shared Snippets — built natively on **Tauri v2 + Rust** with **$0/month** end-to-end encrypted SharePoint, OneDrive, & Git sync.
 
+[![Latest Release](https://img.shields.io/github/v/release/jfmartineau45/skynetssh?color=10B981&label=Latest%20Release)](https://github.com/jfmartineau45/skynetssh/releases/latest)
+[![CI](https://img.shields.io/github/actions/workflow/status/jfmartineau45/skynetssh/ci.yml?branch=main&label=CI)](https://github.com/jfmartineau45/skynetssh/actions/workflows/ci.yml)
 ![Tauri v2](https://img.shields.io/badge/Tauri-v2-24C8DB?logo=tauri&logoColor=white)
 ![Rust](https://img.shields.io/badge/Backend-Rust_Async_(Tokio_%2B_russh)-DEA584?logo=rust&logoColor=white)
 ![React 19](https://img.shields.io/badge/UI-React_19_%2B_TypeScript_%2B_Tailwind_v4-38BDF8?logo=react&logoColor=white)
-![Encryption](https://img.shields.io/badge/Vault-Argon2id_%2B_XChaCha20--Poly1305-EF4444)
+![Vault](https://img.shields.io/badge/Vault-Argon2id_%2B_XChaCha20--Poly1305-EF4444)
+
+---
+
+## Quick Download (Windows 10 / 11 x64)
+
+Grab the latest installer from [**GitHub Releases**](https://github.com/jfmartineau45/skynetssh/releases/latest):
+
+- **Recommended Per-User Setup (`~6.3 MB`):** `SkynetSSH_<version>_x64-setup.exe` *(supports 1-click silent in-app updates)*
+- **Enterprise / GPO MSI (`~9.8 MB`):** `SkynetSSH_<version>_x64_en-US.msi`
+- **Checksums:** `SHA256SUMS.txt` *(verified automatically by the built-in updater before running any update)*
 
 ---
 
 ## Why SkynetSSH?
 
-- **Tabby** nails the translucent dark terminal aesthetic and recursive split panes, **but** runs on heavy Electron (~500+ MB RAM) and buries SSH profile creation inside a clunky settings maze.
-- **Termius** nails the visual Host Vault, slide-over host inspector, SFTP browser, snippets, and port forwarding, **but** locks core sync/SFTP workflows behind a recurring subscription.
-- **SkynetSSH** combines the best of both into a **~6 MB native installer** powered by pure async Rust (`russh`, `russh-sftp`, `portable-pty`) and GPU-accelerated `xterm.js` WebGL panes.
+- **Tabby** nails dark acrylic split panes, **but** runs on heavy Electron (~500+ MB RAM) and buries SSH/RDP management in settings menus.
+- **Termius** nails the visual Host Vault, distro badges, SFTP, snippets, and port forwarding, **but** locks core sync and team workflows behind a recurring per-seat subscription.
+- **SkynetSSH v1.0** unites SSH2, Native Windows RDP, Dual-Pane SFTP, SOCKS5/Port-Forwarding, Multi-Window Tear-Off Consoles, and Zero-Knowledge Team Vault Sync inside a **~6 MB native Rust binary**.
 
 ---
 
-## Features
+## Key Capabilities
 
-### 1. Termius-Style Host Vault & Slide-Over Inspector
-- **Pinned Vault Home Tab:** Organize servers into **Groups** and filterable `#tag` pills, with one-click or double-click launch into SSH or SFTP.
-- **Slide-Over Right Host Inspector:** Clean grouped cards for **Address & Group**, **SSH Credentials**, and **ProxyJump / Startup Automation**—create new Groups or generate/import SSH keys **inline** without ever leaving the host form.
-- **Smart Quick-Connect & Save Bar:** Paste `ssh -p 2222 ubuntu@10.0.1.5` or IPv6 `root@[2001:db8::1]:2200` into the top bar (or straight into the Address field) to auto-parse credentials, save to the Vault, and connect in one step.
-- **1-Click Migration:** Import existing hosts directly from `~/.ssh/config` or a **Termius JSON** export, plus 1-click host card duplication.
+### 1. Termius-Style Multi-Tenant Host Vault & Automatic Distro Logos
+- **Dense List & Card Views + Collapsible Tenant Groups:** Organize hundreds of client or environment machines into color-coded **Tenant / Group** sections with `#tag` filters, `All / SSH / RDP` protocol pills, multi-select bulk actions, and non-blocking hover reachability & latency badges (including 3-ping cold-VPN warmup for `198.x` / `100.x` / WAN tunnels).
+- **Automatic Linux Distro & OS Brand Logos:** Automatically probes `/etc/os-release`, Proxmox VE (`pveversion`), Synology DSM, and `uname -s` on SSH connect and renders vector logos (**Ubuntu, Debian, Proxmox VE, Rocky, AlmaLinux, RHEL, Fedora, CentOS, Alpine, Arch, Kali, openSUSE, Raspberry Pi OS, Amazon Linux, NixOS, Synology, FreeBSD, macOS, Windows, and Linux**) across Vault rows/cards, tabs, pane headers, and Command Palette.
+- **Smart Quick-Connect & Save:** Paste `ssh -p 2222 ubuntu@10.0.1.5`, `rdp://CONTOSO\Admin@10.20.1.50`, `mstsc /v:10.20.1.50:3390`, or IPv6 `root@[2001:db8::1]:2200` into the top bar or `+` menu to parse, save, and launch in one step.
+- **1-Click Migration:** Auto-sniffs `~/.ssh` keys & `~/.ssh/config` hosts on launch and imports **Termius JSON** exports.
 
-### 2. Personal & Team Multi-Vaults (100% Conflict-Free SharePoint / OneDrive / Git Sync)
-- **Personal + Team SharePoint Vault Switcher:** Switch in one click between your **Personal Vault** and one or more shared **Team Vaults** (e.g. a shared OneDrive / SharePoint folder), with high-visibility **`PERSONAL`** vs **`TEAM · <Vault Name>`** badges in the titlebar, sidebar, tabs, and split panes so you never mix up Personal and Team Production servers.
-- **Two-Tier Envelope Cryptography + Optional TOTP (RFC 6238) & 30-Day Device Trust:**
-  1. Each Vault's Master Password derives a 256-bit Key Encryption Key via **`Argon2id`** (64 MiB memory, 3 iterations) so synced SharePoint/OneDrive files remain 100% zero-knowledge encrypted.
-  2. That key wraps a random 256-bit Master Data Encryption Key (`DEK`) in `vault.meta.json`, with structured Windows Credential Manager (DPAPI) device leases capped strictly at **30 days maximum** (`Session only`, `1d`, `7d`, `14d`, or `30d`).
-  3. **Master Password OR 6-Digit Authenticator (TOTP):** Enroll Google/Microsoft Authenticator, 1Password, or Bitwarden via QR code (`auth/totp.enc.json`) to unlock enrolled PCs with either a **6-digit TOTP code** or your **Master Password**—protected by a **3-strike local wipe** (3 wrong TOTP attempts immediately purge the local Credential Manager cache and force Master Password entry).
-  4. Every host, SSH key, group, tunnel, snippet, and known-host fingerprint is encrypted individually with **`XChaCha20-Poly1305`** and AAD header binding (`collection:id:schema:updated_at:tombstone`) into its own `<uuid>.enc.json` file.
-- **Mathematically Conflict-Free SharePoint / OneDrive Sync:**
-  - Unique `.tmp` atomic writes with automatic backoff retry for `OneDrive.exe` sharing locks (`ERROR_SHARING_VIOLATION`).
-  - Deterministic **Last-Writer-Wins (`(updated_at, ciphertext)`) CRDT reconciliation** that automatically resolves and cleans up OneDrive `-{COMPUTERNAME}.enc.json`, Dropbox `conflicted copy`, and Syncthing `sync-conflict` sibling forks without duplicating hosts.
-  - **Live Folder Watcher:** When a teammate saves a host into your shared OneDrive / SharePoint folder, every teammate's open SkynetSSH window updates automatically in real time.
-- **~/.ssh Auto-Sniffing:** Non-destructively scans `~/.ssh` on launch to detect existing private keys (`id_ed25519`, custom keys, `.pem`, passphrase-protected keys) and `~/.ssh/config` hosts (`Host`, `IdentityFile`, `ProxyJump`) for 1-click Vault import.
+### 2. Native Windows RDP (`mstsc`) + Zero-Prompt Vault Login + Auto SSH Bastion Tunnel
+- **Zero-Prompt Win32 Session Credentials:** Injects AEAD-decrypted Vault passwords directly into Windows Credential Manager via Win32 `CredWriteW` (`TERMSRV/<host>`, `CRED_PERSIST_SESSION`, zeroized UTF-16LE memory) and automatically purges the credential via `CredDeleteW` when `mstsc.exe` exits—passwords never touch `.rdp` files or CLI arguments.
+- **1-Click RDP Over SSH Jump Host:** Assign any Linux SSH Bastion as the Jump Host on a private LAN Windows VM; SkynetSSH automatically opens an ephemeral local `127.0.0.1:<port> -> <target>:3389` `direct-tcpip` tunnel over `russh`, launches `mstsc.exe` against the tunnel, and tears the listener down cleanly on disconnect.
+- **Display Modes:** Choose **Smart Window** (`smart sizing` + `dynamic resolution`), **Fullscreen**, or **All Monitors** (`use multimon`).
 
-### 3. Tabby-Style Multi-Pane Terminal & Local Shells
-- **Recursive Binary Split Panes:** Split any tab horizontally or vertically with smooth drag-resizable dividers—freely mixing remote SSH servers and local shells in the same tab.
-- **GPU-Accelerated `xterm.js` WebGL:** 10,000-line scrollback, inline buffer search (`Ctrl+Shift+F`), clickable URLs, copy-on-shortcut (`Ctrl+Shift+C`), and 4ms / 64 KB output batching in Rust so `btop`, `vim`, and fast log dumps stay responsive.
-- **Auto-Discovered Local Shells:** Automatically detects **PowerShell 7 (`pwsh`)**, **Windows PowerShell**, **Git Bash**, **Command Prompt (`cmd`)**, and installed **WSL2** distributions via Windows ConPTY (`portable-pty`).
+### 3. Zero-Pause Multi-Window Tear-Off, Pop-Out & Recursive Split Panes
+- **Live Chrome-Style Tab Tear-Off:** Drag any terminal tab outside the 40px TitleBar (or press `Ctrl+Shift+O`) to detach it into a pre-warmed hardware-accelerated native window with **zero connection drop** and **64 KB ring-buffer output replay**.
+- **Multi-Tab & Split-Tree Dock-Back:** Open additional consoles or split panes inside a Pop-Out window, then click **`↙ Dock All`** (or dock individual tabs) to merge every console and split layout seamlessly back into your Main window.
+- **Recursive Split Panes & Broadcast Mode:** Split horizontally/vertically (`Alt+Shift+D` / `Alt+Shift+E`), un-split panes back into tabs, and mirror keystrokes across multiple servers simultaneously with **Broadcast**.
+- **Auto-Discovered Local Shells:** Detects **PowerShell 7 (`pwsh`)**, **Windows PowerShell**, **Git Bash**, **CMD**, and installed **WSL2** distros off the UI thread via Windows ConPTY.
 
-### 4. Multiplexed SSH2, Multi-Hop `ProxyJump` & Agent Auth
-- **Multiplexed Connections:** A single authenticated `russh` session per host powers multiple terminal panes, SFTP browsers, and tunnels simultaneously without repeated handshakes.
-- **In-Memory `ProxyJump` Chaining:** Hop through 1..N bastion servers (`Host C` via `Host B` via `Host A`) purely over virtual `direct-tcpip` streams with loop detection.
-- **Flexible Authentication:**
-  - **Vault Keychain:** Generate **Ed25519** or **RSA-4096** keys in one click, import `.pem` / OpenSSH files, paste PEM keys (validated with SHA-256 fingerprint & `authorized_keys` public-key extraction), and store key passphrases encrypted in the Vault.
-  - **Native SSH Agent:** Connects to Windows OpenSSH `\\.\pipe\openssh-ssh-agent` and **Pageant** (1Password, KeePassXC, PuTTY) before falling back to `~/.ssh` keys.
-  - **Password Auth:** Stored encrypted inside your host envelope.
-- **Interactive `known_hosts` Verification:** Trust-On-First-Use (TOFU) SHA-256 fingerprint modal and high-visibility Man-In-The-Middle warning if a remote host key ever changes.
+### 4. Personal & Team Multi-Vaults (Zero-Knowledge SharePoint / OneDrive / Git Sync)
+- **Two-Tier Envelope Encryption (`Argon2id` + `XChaCha20-Poly1305`):**
+  1. Master Password derives a 256-bit Key Encryption Key via **`Argon2id`** (64 MiB memory, 3 iterations).
+  2. Wraps a random 256-bit Master `DEK` in `vault.meta.json`, with optional Windows DPAPI device leases strictly capped at **30 days max**.
+  3. **RFC 6238 Authenticator (TOTP) Unlock:** Unlock enrolled devices with a **6-digit TOTP code** or **Master Password**, protected by a **3-strike automatic credential wipe**.
+  4. Every host, SSH key, group, tunnel, snippet, and known-host fingerprint is encrypted in its own AAD-bound `<uuid>.enc.json` file.
+- **Conflict-Free SharePoint / OneDrive Sync:** Atomic temp writes, `OneDrive.exe` lock-retry backoff, deterministic Last-Writer-Wins healing of `-{COMPUTERNAME}.enc.json` conflict copies, automatic **Read-Only Member** detection on restricted SharePoint folders, and live filesystem watching.
 
-### 5. Dual-Pane SFTP + Epic Quick In-Session SFTP Drawer
-- **Drag-Resizable Quick SFTP Drawer:** Toggle a slide-out SFTP browser inside any active SSH tab, reusing the live SSH connection with zero re-authentication, embedded transfer progress, clickable path breadcrumbs, quick Linux bookmarks (`~`, `/`, `/etc`, `/var/log`, `/opt`, `/tmp`), and **Windows Explorer drag-and-drop upload**.
-- **Latest-Modified Triage & Terminal Sync:** Live **Modified** recency badges (`Just now`, `5m ago`, `2h ago` + full timestamp hover), sortable `Name / Modified / Size` columns, 1-click **`⚡ Latest`** mode (surfaces newly modified logs/configs right to row #1 above older folders), **`.*` dotfiles toggle**, instant 64 KB **Quick Peek** file viewer, and 1-click **`cd` Here** / **`tail -f` in Terminal** actions.
-- **Dedicated Dual-Pane SFTP Tab:** Side-by-side panes where either side can be **Local PC** or **Any Saved Remote Host**—supporting `Local <-> Remote` transfers and direct streamed **`Remote A <-> Remote B`** transfers.
-- **Remote File Tools:** Live chunked progress dock, `mkdir`, rename, delete, octal `chmod` permissions modal, and **"Edit Locally"** (downloads to a sanitized temp directory, opens in your default Windows editor via `ShellExecuteW`, watches for saves, and auto-uploads back over SFTP).
+### 5. Dual-Pane SFTP + In-Session Quick SFTP Drawer
+- **Quick SFTP Drawer:** Slide open SFTP inside any SSH tab reusing the multiplexed SSH session—complete with Windows Explorer drag-and-drop upload, `⚡ Latest` modified triage, `.*` dotfile toggle, 64 KB Quick Peek viewer, **`cd` Here**, **`tail -f` in Terminal**, and **"Edit Locally"** auto-reupload watcher.
+- **Dedicated Dual-Pane SFTP Tab:** Transfer `Local <-> Remote` or stream directly **`Remote A <-> Remote B`**.
 
-### 6. Port Forwarding & Built-In Dynamic SOCKS5 Proxy
-- **Local (`-L`):** Bind a local port and forward traffic through SSH `direct-tcpip` to any remote target.
-- **Remote (`-R`):** Bind a remote port via `tcpip-forward` and route incoming `forwarded-tcpip` connections back to a local service.
-- **Dynamic SOCKS5 (`-D`):** Built-in async RFC 1928 SOCKS5 proxy server (IPv4, IPv6, and domain resolution) over SSH—run tunnels independently in the background with live active-connection counts.
+### 6. Port Forwarding (`-L`, `-R`, `-D` SOCKS5) & `##` Shared Snippets
+- **Port Forwarding:** Local (`-L`), Remote (`-R`), and built-in async RFC 1928 **Dynamic SOCKS5 (`-D`)** proxy with live connection telemetry.
+- **Inline `##` Snippets Playbook:** Type `##` at any normal shell prompt (automatically disabled inside `nano`, `vim`, `tmux`, and `htop` alternate buffers!) to fuzzy-pick team snippets with `{{variable}}` prompts.
 
-### 7. Shared Categorized Snippets Playbook, Broadcast & Themes
-- **Team-Shared & Categorized Snippets:** Organize frequent ops commands into **Category Folders** (`Docker & Containers`, `Linux & Systemd`, `Networking & TLS`, `Disk & Performance`, or custom folders) with `#tag` filters, synced live across teammates in your **Team SharePoint / OneDrive Vault**, plus 1-click **Starter Ops Pack**, **JSON Export/Import** across Vaults, an inline **Snippets** picker on every terminal pane header, `{{variable}}` interactive prompts (preserving Docker/Go `{{.Names}}` templates), and an optional UI visibility toggle.
-- **Multi-Host Broadcast Mode:** Toggle **Broadcast** in the title bar to mirror keystrokes simultaneously across all selected panes (highlighted with amber tactical borders).
-- **TUI-Safe Command Palette (`Ctrl+Shift+P`):** Fuzzy-search launcher to connect to hosts, open Dual-Pane SFTP, spawn local shells, toggle tunnels, run snippets, or switch themes—designed so bare `Ctrl+<key>` and `Alt+<key>` shortcuts never interfere with `nano`, `vim`, `tmux`, `htop`, `mc`, or `bash`.
-- **5 Built-In Themes (Live-Switching):**
-  - **Cyberdyne Obsidian** *(Default — matte carbon glass + crimson T-800 accents)*
-  - **T-800 Tactical HUD** *(High-contrast crimson optical HUD)*
-  - **Tabby Acrylic Dark** *(Classic Tabby slate + electric sky-blue)*
-  - **Termius Midnight** *(Deep navy + emerald vault accents)*
-  - **Tokyo Night** *(Low-glare indigo night palette)*
+### 7. Built-In GitHub Release Update Detection & 1-Click Auto-Updater
+- Automatically checks `github.com/jfmartineau45/skynetssh/releases/latest` on startup (configurable in **Vault -> Settings**).
+- Displays a subtle emerald **`⬆ vX.Y.Z`** pill in the TitleBar only when a newer release exists, verifies the downloaded NSIS installer against `SHA256SUMS.txt`, applies the update silently, and relaunches `SkynetSSH`.
+
+---
+
+## TUI-Safe Keyboard Shortcuts
+
+All terminal shortcuts are engineered so bare `Ctrl+<letter>`, `Ctrl+-/_`, `Alt+<key>`, and `F1..F12` pass straight through to `nano`, `vim`, `tmux`, `htop`, `mc`, and `bash`.
+
+| Shortcut | Action |
+| :--- | :--- |
+| `` Ctrl + ` `` *(Global OS-Wide)* | **Quake Bring-to-Front / Hide Toggle** across all SkynetSSH windows (customizable via **Record Key** in Settings) |
+| `Ctrl + Shift + P` *(or `Ctrl + K` outside terminal)* | Open **Command Palette** (hosts, RDP, split-with, shells, SFTP, tunnels, snippets, updates, themes) |
+| `Ctrl + Shift + O` *(or Drag Tab Out)* | **Pop Out** active terminal tab into standalone window / **Dock Back** to Main |
+| `Alt + Shift + P` | Toggle **Pin Window Always on Top** |
+| `Ctrl + Shift + T` | Open new Local Terminal tab |
+| `Ctrl + Shift + N` | Open **New Host** slide-over Vault inspector |
+| `Ctrl + Shift + W` | Close active tab |
+| `Ctrl + Tab` / `Ctrl + Shift + Tab` | Cycle next / previous tab |
+| `Ctrl + Alt + 1 .. 9` | Jump directly to Tab 1..9 (`Ctrl+1..9` also works outside `.xterm`) |
+| `Alt + Shift + D` / `Alt + Shift + E` | Split active pane **Right** / **Down** (`Shift+Click` header icon = instant duplicate split) |
+| `Ctrl + Shift + F` | Toggle inline buffer search inside active terminal pane |
+| `Ctrl + Shift + C` / `V` | Copy / Paste in terminal (plus optional **Copy-on-Select** & **Right-Click Paste**) |
+| `Ctrl + Alt + =` / `-` / `0` | Zoom terminal font size in / out / reset |
+| `##` *(in normal shell prompt)* | Open inline **Shared Snippets** autocomplete picker |
 
 ---
 
@@ -81,24 +98,25 @@
 ```mermaid
 flowchart TB
     subgraph UI["Frontend — React 19 + TypeScript + Tailwind CSS v4 + Zustand"]
-        VaultUI["Pinned Vault Dashboard & Slide-Over Host Inspector"]
-        Tabs["Top Tab Bar + Recursive Split-Pane Engine"]
-        Xterm["xterm.js + WebGL + Fit / Search / WebLinks"]
+        VaultUI["Multi-Tenant Vault + Auto Distro Logos + Slide-Over Inspector"]
+        Tabs["Tear-Off Multi-Window Tab Bar + Recursive Split-Pane Engine"]
+        Xterm["Pre-Warmed xterm.js + WebGL2 + Fit / Search / WebLinks"]
         SftpUI["Dual-Pane SFTP Tab & In-Session Quick SFTP Drawer"]
     end
 
-    subgraph IPC["Tauri v2 Typed IPC & Channels"]
-        Invoke["Typed Commands (Vault CRUD, SSH/Tunnel Control, Git Sync)"]
-        Stream["Batched Byte & Progress Channels (4ms / 64 KB Coalescer)"]
+    subgraph IPC["Tauri v2 Typed Async IPC & Batched Channels"]
+        Invoke["Async Commands (Vault CRUD, SSH/RDP/Tunnel, GitHub Updater)"]
+        Stream["Coalesced Byte & Progress Channels (4ms / 64 KB Ring Buffer)"]
     end
 
     subgraph Core["Rust Backend — Tokio Async Runtime"]
-        Vault["Vault Engine (Argon2id + XChaCha20-Poly1305 + OS Keyring)"]
-        Pool["Multiplexed SSH Pool (russh + ProxyJump + Agent/Pageant)"]
-        Pty["Local Shell Manager (portable-pty / Windows ConPTY)"]
+        Vault["Vault Engine (Argon2id + XChaCha20-Poly1305 + TOTP + DPAPI)"]
+        Pool["Multiplexed SSH Pool (russh + ProxyJump + OS Probe + Agent/Pageant)"]
+        Rdp["Native RDP Launcher (Win32 CredWriteW + Ephemeral SSH Bastion Tunnel)"]
+        Pty["Local Shell Manager (portable-pty / Cached Async WSL2 Discovery)"]
         Sftp["Streaming SFTP Engine (russh-sftp + Local Editor Watcher)"]
         Tunnel["Tunnel Engine (-L Local, -R Remote, -D SOCKS5)"]
-        Sync["Importers (~/.ssh/config, Termius) & Git Sync"]
+        Updater["GitHub Releases Updater (SemVer + SHA-256 Verifier)"]
     end
 
     UI <--> Invoke
@@ -106,80 +124,52 @@ flowchart TB
     SftpUI <--> Stream
     Invoke --> Vault
     Invoke --> Pool
+    Invoke --> Rdp
     Invoke --> Pty
     Invoke --> Sftp
     Invoke --> Tunnel
-    Invoke --> Sync
+    Invoke --> Updater
+    Pool --> Rdp
     Pool --> Sftp
     Pool --> Tunnel
 ```
 
-### Encrypted Vault Directory Structure
-```text
-<vault-directory>/
-├── vault.meta.json            # Argon2id salt/params + XChaCha20 wrapped 256-bit Master DEK
-├── groups/<uuid>.enc.json     # Encrypted group envelopes
-├── hosts/<uuid>.enc.json      # Encrypted host credentials & ProxyJump links
-├── keys/<uuid>.enc.json       # Encrypted OpenSSH private keys & passphrases
-├── tunnels/<uuid>.enc.json    # Encrypted -L / -R / -D port-forwarding rules
-├── snippets/<uuid>.enc.json   # Encrypted command templates
-└── known_hosts/<uuid>.enc.json# Verified SHA-256 server host-key fingerprints
-```
-
 ---
 
-## Keyboard Shortcuts (Tabby-Style)
+## Development, Branching & Release Workflow
 
-| Shortcut | Action |
-| :--- | :--- |
-| `` Ctrl + ` `` *(Global OS-Wide)* | **Bring to Front / Quake Hide Toggle** from anywhere in Windows (customizable in Settings) |
-| `Ctrl + K` | Open global **Command Palette** (hosts, split-with, shells, SFTP, tunnels, snippets, themes) |
-| `Ctrl + Shift + T` | Open new Local Terminal tab |
-| `Ctrl + Shift + N` | Open **New Host** slide-over Vault inspector |
-| `Ctrl + Shift + W` | Close active tab |
-| `Ctrl + Tab` / `Ctrl + Shift + Tab` | Cycle next / previous tab |
-| `Ctrl + 1 .. 9` | Jump directly to Tab 1..9 (`Ctrl + 1` = Vault) |
-| `Alt + Shift + D` | Split active pane **Right** (opens Host / Shell picker) |
-| `Alt + Shift + E` | Split active pane **Down** (opens Host / Shell picker) |
-| `Ctrl + Shift + F` | Toggle inline search inside the active terminal pane |
-| `Ctrl + Shift + C` / `V` | Copy / Paste in terminal (plus automatic **Copy-on-Select** & **Right-Click Paste**) |
-| `Ctrl + =` / `-` / `0` | Zoom terminal font size in / out / reset |
-| `Middle-Click` on Tab | Close terminal or SFTP tab |
-| `Double-Click` Host Card | Open new SSH terminal tab for that host |
+### Repository Branches
+- **`main`** — Production-ready release branch. Tagged releases (`v1.0.0`, `v1.0.1`, ...) are cut from `main`.
+- **`develop`** — Integration branch for upcoming features and fixes; verified automatically by `.github/workflows/ci.yml` before merging to `main`.
 
----
-
-## Getting Started (Development & Build)
-
-### Prerequisites
-- **Node.js 22+** and **pnpm**
-- **Rust (stable)** via `rustup`
-- **Windows:** Edge WebView2 (pre-installed on Windows 11) + MSVC Build Tools or MinGW-w64 + LLVM `lld`
-
-### Install & Run in Dev Mode
+### Local Development
 ```bash
 pnpm install
 pnpm tauri dev
 ```
 
-### Run Unit Tests (TypeScript + Rust)
+### Run Verification Suite
 ```bash
-# Frontend SSH/IPv6 connection-string parser tests
+# TypeScript SSH/RDP/SFTP/Window unit tests + production bundle check
 pnpm test
+pnpm build
 
-# Backend Argon2id/XChaCha20 Vault, Ed25519 keygen, OpenSSH config & SOCKS5 tests
+# Rust Vault crypto, TOTP, RDP CredMan, SOCKS5, OS detection & Updater unit tests
 cd src-tauri && cargo test --lib
 ```
 
-### Build Production Installer (`~5.9 MiB` NSIS `.exe`)
-```bash
-pnpm tauri build --bundles nsis
-```
-The standalone per-user Windows installer is output to:
-`src-tauri/target/release/bundle/nsis/SkynetSSH_0.1.0_x64-setup.exe`
+### Publishing a New Release (Triggers Automatic In-App Updates)
+1. Bump the version in `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json` (e.g. `1.0.1`).
+2. Commit to `main` and push a SemVer tag:
+   ```bash
+   git commit -am "chore(release): v1.0.1"
+   git tag v1.0.1
+   git push origin main --tags
+   ```
+3. [`.github/workflows/release.yml`](.github/workflows/release.yml) automatically runs tests, compiles `SkynetSSH_1.0.1_x64-setup.exe` + `.msi`, generates `SHA256SUMS.txt`, and publishes the GitHub Release — every installed `SkynetSSH` instance will detect `v1.0.1` and offer a 1-click verified upgrade.
 
 ---
 
 ## License
 
-MIT
+[MIT](LICENSE)

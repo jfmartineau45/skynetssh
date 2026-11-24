@@ -123,8 +123,10 @@ export const HostsPanel: React.FC = () => {
       : "";
     const isMultiPing =
       h.address.trim().startsWith("198.") ||
-      h.label.toLowerCase().includes("secorall") ||
-      gName.toLowerCase().includes("secorall");
+      h.address.trim().startsWith("100.") ||
+      h.label.toLowerCase().includes("vpn") ||
+      gName.toLowerCase().includes("vpn") ||
+      gName.toLowerCase().includes("wan");
 
     setProbeMap((prev) => ({
       ...prev,

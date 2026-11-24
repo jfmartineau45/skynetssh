@@ -6,6 +6,7 @@ pub mod ssh;
 pub mod sync;
 pub mod totp;
 pub mod tunnel;
+pub mod updater;
 pub mod vault;
 
 use std::path::PathBuf;
@@ -20,9 +21,10 @@ use tauri_plugin_global_shortcut::{
 };
 
 use crate::models::{
-    ActiveTunnelRuntime, DirectoryListing, GitSyncStatus, GroupRecord, HostProbeResult, HostRecord,
-    RdpLaunchResult, ShellProfile, SnippetRecord, SshFolderScan, SshKeyRecord, TotpSetupPayload,
-    TransferProgressEvent, TunnelRecord, VaultSnapshot, VaultStatus,
+    ActiveTunnelRuntime, AppUpdateInfo, DirectoryListing, GitSyncStatus, GroupRecord,
+    HostProbeResult, HostRecord, RdpLaunchResult, ShellProfile, SnippetRecord, SshFolderScan,
+    SshKeyRecord, TotpSetupPayload, TransferProgressEvent, TunnelRecord, VaultSnapshot,
+    VaultStatus,
 };
 use crate::pty::PtyManager;
 use crate::ssh::SshPool;
@@ -294,6 +296,34 @@ fn app_set_global_hotkey(
     let mut guard = state.vault.lock().map_err(err_str)?;
     guard.set_global_hotkey(hotkey).map_err(err_str)?;
     Ok(guard.status())
+}
+
+#[tauri::command]
+async fn app_check_update() -> CmdResult<AppUpdateInfo> {
+    updater::check_github_release().await.map_err(err_str)
+}
+
+#[tauri::command]
+async fn app_install_update(
+    download_url: String,
+    asset_name: String,
+    sha256_url: Option<String>,
+    app: AppHandle,
+) -> CmdResult<()> {
+    updater::download_and_install_update(&app, &download_url, &asset_name, sha256_url.as_deref())
+        .await
+        .map_err(err_str)
+}
+
+#[tauri::command]
+fn app_open_external_url(url: String, app: AppHandle) -> CmdResult<()> {
+    let trimmed = url.trim();
+    if !trimmed.starts_with("https://") {
+        return Err("Only HTTPS links may be opened externally".into());
+    }
+    tauri_plugin_opener::OpenerExt::opener(&app)
+        .open_url(trimmed, None::<&str>)
+        .map_err(err_str)
 }
 
 /* ─── Vault CRUD Commands ─── */
@@ -1324,6 +1354,9 @@ pub fn run() {
             vault_switch_profile,
             vault_remove_profile,
             app_set_global_hotkey,
+            app_check_update,
+            app_install_update,
+            app_open_external_url,
             vault_save_group,
             vault_delete_group,
             vault_save_host,

@@ -12,6 +12,7 @@ import {
   Pin,
   Droplets,
   Cpu,
+  ArrowUpCircle,
 } from "lucide-react";
 import {
   useWorkspaceStore,
@@ -52,10 +53,20 @@ export const CommandPalette: React.FC = () => {
     toggleBloodRain,
     setSkynetTakeoverActive,
     setTheme,
+    updateInfo,
+    checkForUpdates,
+    installAvailableUpdate,
+    setActiveTab,
   } = useWorkspaceStore();
 
-  const { hosts, tunnels, activeTunnels, snippets, refreshTunnels } =
-    useVaultStore();
+  const {
+    hosts,
+    tunnels,
+    activeTunnels,
+    snippets,
+    refreshTunnels,
+    setActiveSection,
+  } = useVaultStore();
 
   const [query, setQuery] = useState("");
   const [selectedIdx, setSelectedIdx] = useState(0);
@@ -211,6 +222,30 @@ export const CommandPalette: React.FC = () => {
       }
     }
 
+    if (updateInfo?.updateAvailable && updateInfo.downloadUrl) {
+      list.push({
+        id: "app-install-update",
+        category: "Updates",
+        title: `Install SkynetSSH v${updateInfo.latestVersion} & Restart`,
+        subtitle: "Verified GitHub Release silent NSIS update",
+        icon: <ArrowUpCircle className="w-4 h-4 text-emerald-400" />,
+        run: () => installAvailableUpdate(),
+      });
+    }
+
+    list.push({
+      id: "app-check-updates",
+      category: "Updates",
+      title: "Check for SkynetSSH Updates",
+      subtitle: "Query github.com/jfmartineau45/skynetssh/releases/latest",
+      icon: <ArrowUpCircle className="w-4 h-4 text-emerald-300" />,
+      run: async () => {
+        setActiveSection("sync");
+        setActiveTab("vault");
+        await checkForUpdates(false);
+      },
+    });
+
     list.push({
       id: "win-pin-top",
       category: "Window",
@@ -281,6 +316,11 @@ export const CommandPalette: React.FC = () => {
     toggleBloodRain,
     setSkynetTakeoverActive,
     setTheme,
+    updateInfo,
+    checkForUpdates,
+    installAvailableUpdate,
+    setActiveTab,
+    setActiveSection,
   ]);
 
   if (!commandPaletteOpen) return null;

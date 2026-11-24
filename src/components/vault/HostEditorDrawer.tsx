@@ -477,7 +477,7 @@ export const HostEditorDrawer: React.FC<Props> = ({
                 value={newGroupName}
                 onChange={(e) => setNewGroupName(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleCreateGroupInline()}
-                placeholder="Group name (e.g. Client - Secorall)..."
+                placeholder="Group name (e.g. Client - Acme Corp)..."
                 className="flex-1 px-2.5 py-1.5 rounded-lg bg-black/50 border border-[var(--border-accent)] text-xs text-white"
               />
               <button
